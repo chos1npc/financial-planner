@@ -314,7 +314,7 @@ function summarizeCompanies(companies: ImportedCompany[], startDate: string, tod
       return;
     }
     const workDate = reportWorkDate(company.announcementDate);
-    if (company.announcementDate >= previousWorkday && company.announcementDate <= today) announced += 1;
+    if (company.announcementDate >= previousWorkday) announced += 1;
     if (workDate < startDate) beforeSeason += 1;
     else if (workDate >= startDate && workDate <= today) due += 1;
   });
