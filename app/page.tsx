@@ -791,28 +791,20 @@ function LiveWorkspace() {
   const dailyComparisonByDate = useMemo(() => {
     const result = new Map<string, DailyComparison>();
     if (!settings.importedCompanies.length) return result;
-    const start = settings.seasonStartDate;
     const today = localTodayISO();
-    const previousWorkday = toISO(addBusinessDays(parseDate(start), -1));
-    const scopedCompanies = issuedCompaniesForPeriod(settings.importedCompanies, start, today);
-    const pending = new Map<string, string>();
+    const scopedCompanies = issuedCompaniesForPeriod(settings.importedCompanies, settings.seasonStartDate, today);
     tableRows.forEach((row) => {
-      const newCodes: string[] = [];
-      scopedCompanies.forEach((company) => {
-        if (!company.announcementDate || company.announcementDate < previousWorkday || company.announcementDate >= row.date) return;
-        const key = companyIdentity(company.code, company.name);
-        if (!pending.has(key)) {
-          pending.set(key, company.code || company.name);
-          newCodes.push(company.code || company.name);
-        }
-      });
+      const previousWorkday = toISO(addBusinessDays(parseDate(row.date), -1));
+      const availableCompanies = scopedCompanies.filter((company) => Boolean(company.announcementDate && company.announcementDate >= previousWorkday && company.announcementDate < row.date));
+      const newCodes = availableCompanies.map((company) => company.code || company.name);
+      const availableCodes = [...newCodes];
       const completedCompanies = scopedCompanies.filter((company) => company.completionDate === row.date);
-      const availableCodes = [...pending.values()];
       const completedCodes = completedCompanies.map((company) => company.code || company.name);
-      const matchedCodes = completedCompanies.filter((company) => pending.has(companyIdentity(company.code, company.name))).map((company) => company.code || company.name);
-      const completedOnlyCodes = completedCompanies.filter((company) => !pending.has(companyIdentity(company.code, company.name))).map((company) => company.code || company.name);
-      completedCompanies.forEach((company) => pending.delete(companyIdentity(company.code, company.name)));
-      result.set(row.date, { date: row.date, newCodes, availableCodes, completedCodes, matchedCodes, completedOnlyCodes, endingBacklogCodes: [...pending.values()] });
+      const availableKeys = new Set(availableCompanies.map((company) => companyIdentity(company.code, company.name)));
+      const matchedCodes = completedCompanies.filter((company) => availableKeys.has(companyIdentity(company.code, company.name))).map((company) => company.code || company.name);
+      const completedOnlyCodes = completedCompanies.filter((company) => !availableKeys.has(companyIdentity(company.code, company.name))).map((company) => company.code || company.name);
+      const endingBacklogCodes = scopedCompanies.filter((company) => !company.completionDate || company.completionDate > row.date).map((company) => company.code || company.name);
+      result.set(row.date, { date: row.date, newCodes, availableCodes, completedCodes, matchedCodes, completedOnlyCodes, endingBacklogCodes });
     });
     return result;
   }, [settings.importedCompanies, settings.seasonStartDate, tableRows]);
