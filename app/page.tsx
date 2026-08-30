@@ -299,7 +299,9 @@ function rowsFromCompanies(companies: ImportedCompany[], startDate: string, endD
     }
     if (company.completionDate && company.completionDate >= startDate && company.completionDate <= endDate) completedByDate.set(company.completionDate, (completedByDate.get(company.completionDate) ?? 0) + 1);
   });
-  return createDailyRows(startDate, endDate).map((row) => ({ ...row, received: receivedByDate.get(row.date) ?? 0, completed: completedByDate.get(row.date) ?? 0 }));
+  const dates = new Set(createDailyRows(startDate, endDate).map((row) => row.date));
+  [...receivedByDate.keys(), ...completedByDate.keys()].forEach((date) => dates.add(date));
+  return [...dates].sort().map((date) => ({ id: makeId(), date, received: receivedByDate.get(date) ?? 0, completed: completedByDate.get(date) ?? 0 }));
 }
 
 function summarizeCompanies(companies: ImportedCompany[], startDate: string, today: string) {
@@ -770,7 +772,7 @@ function LiveWorkspace() {
     const feasible = outstanding <= remainingCapacity;
     const neededDaily = daysLeft > 0 ? outstanding / daysLeft : Infinity;
     const requiredPeople = daysLeft > 0 && team.perPersonCapacity > 0 ? Math.ceil(outstanding / (daysLeft * team.perPersonCapacity)) : null;
-    const actualDays = new Set(validRows.filter((row) => isWorkday(parseDate(row.date))).map((row) => row.date)).size;
+    const actualDays = new Set(validRows.filter((row) => row.completed > 0).map((row) => row.date)).size;
     const observedPerPerson = actualDays > 0 && team.teamCount > 0 ? completed / actualDays / team.teamCount : 0;
     let finishDate: Date | null = outstanding <= 0 ? latestDate : null;
     let remaining = outstanding;
@@ -912,7 +914,7 @@ function LiveWorkspace() {
         </div>
         <div className="section-heading"><div><span>STEP 3</span><h2>匯入公司與完成紀錄</h2></div><div className="inline-actions"><button className="text-button" onClick={() => setRows(liveExample)}>載入範例</button><button className="text-button" onClick={() => setRows((current) => syncDailyRows(current, settings.seasonStartDate, localTodayISO()))}>補齊到今天</button></div></div>
         <div className="import-panel">
-          <p>公司清單與人力完成紀錄是兩個檔案。先匯入公司清單，再依上方輸入的人名尋找人力檔案中同名工作表。公告日會往後對應到下一個工作日：忙季第一天會包含忙季開始日前一個工作日公告的財報。</p>
+          <p>公司清單與人力完成紀錄是兩個檔案。先匯入公司清單，再依上方輸入的人名尋找人力檔案中同名工作表。公告日會往後對應到下一個工作日：忙季第一天會包含忙季開始日前一個工作日公告的財報。每日表格會保留 Excel 實際完成日，即使是假日；若當天完成量大於收到量，代表正在消化前幾日待辦。</p>
           <div className="import-file-row"><span>公司財報清單（公告日）</span><button className="text-button" onClick={() => companyFileRef.current?.click()}>選擇 Excel／XLSM</button><input ref={companyFileRef} className="sr-only" type="file" accept=".xlsx,.xlsm" onChange={(event) => readWorkbook(event, 'company')} />{companyWorkbookName && <strong>{companyWorkbookName}</strong>}</div>
           <div className="import-file-row"><span>人力完成紀錄（依人名找工作表）</span><button className="text-button" onClick={() => manpowerFileRef.current?.click()}>選擇 Excel／XLSM</button><input ref={manpowerFileRef} className="sr-only" type="file" accept=".xlsx,.xlsm" onChange={(event) => readWorkbook(event, 'manpower')} />{manpowerWorkbookName && <strong>{manpowerWorkbookName}</strong>}</div>
           {companyWorkbookSheets.length > 0 && <div className="import-controls">
