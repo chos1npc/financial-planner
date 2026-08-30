@@ -236,9 +236,10 @@ function normalizeDateValue(value: unknown, fallbackYear?: number): string | nul
   if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
   const compact = text.match(/^(20\d{2})([0-9]{2})([0-9]{2})$/);
   if (compact) return `${compact[1]}-${compact[2]}-${compact[3]}`;
-  const embedded = text.match(/(?:^|[^0-9])([0-9]{2})([0-9]{2})(?:[^0-9]|$)/);
-  if (embedded && fallbackYear) return `${fallbackYear}-${embedded[1]}-${embedded[2]}`;
-  const mmdd = text.match(/^(?:20\d{2}[-\/]?)?([0-9]{1,2})[-\/]?([0-9]{1,2})(?:[_A-Za-z].*)?$/);
+  // Completion/announcement cells must contain a standalone date. Values
+  // with labels or suffixes (for example, `PYJ_0821` or `0810_X`) are not
+  // dates and must not be counted as completed records.
+  const mmdd = text.match(/^(?:20\d{2}[-\/]?)?([0-9]{1,2})[-\/]?([0-9]{1,2})$/);
   if (mmdd && fallbackYear) return `${fallbackYear}-${mmdd[1].padStart(2, '0')}-${mmdd[2].padStart(2, '0')}`;
   return null;
 }
