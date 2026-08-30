@@ -3,6 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 type Mode = 'forecast' | 'live' | null;
+type TeamMode = 'uniform' | 'individual';
+type TeamMember = { id: string; name: string; dailyBooks: number };
 type HistoricalRow = { id: string; date: string; quantity: number };
 type LiveRow = { id: string; date: string; received: number; completed: number };
 type ForecastSettings = {
@@ -12,12 +14,16 @@ type ForecastSettings = {
   people: number;
   speed: number;
   efficiency: number;
+  teamMode: TeamMode;
+  members: TeamMember[];
 };
 type LiveSettings = {
   completionDate: string;
   people: number;
   speed: number;
   efficiency: number;
+  teamMode: TeamMode;
+  members: TeamMember[];
   openingBacklog: number;
   expectedRemaining: number;
 };
@@ -33,6 +39,8 @@ const initialForecastSettings: ForecastSettings = {
   people: 12,
   speed: 10,
   efficiency: 85,
+  teamMode: 'uniform',
+  members: [],
 };
 
 const initialLiveSettings: LiveSettings = {
@@ -40,6 +48,8 @@ const initialLiveSettings: LiveSettings = {
   people: 8,
   speed: 9,
   efficiency: 85,
+  teamMode: 'uniform',
+  members: [],
   openingBacklog: 0,
   expectedRemaining: 150,
 };
@@ -127,6 +137,21 @@ function compactNumber(value: number, digits = 0) {
   return new Intl.NumberFormat('zh-TW', { maximumFractionDigits: digits }).format(value);
 }
 
+function getTeamCapacity(settings: Pick<ForecastSettings, 'teamMode' | 'members' | 'people' | 'speed' | 'efficiency'>) {
+  if (settings.teamMode === 'individual') {
+    const dailyCapacity = settings.members.reduce((sum, member) => sum + Math.max(0, member.dailyBooks), 0);
+    const teamCount = settings.members.length;
+    return {
+      teamCount,
+      dailyCapacity,
+      perPersonCapacity: teamCount > 0 ? dailyCapacity / teamCount : 0,
+    };
+  }
+  const teamCount = Math.max(0, settings.people);
+  const perPersonCapacity = Math.max(0, settings.speed) * (settings.efficiency / 100);
+  return { teamCount, perPersonCapacity, dailyCapacity: teamCount * perPersonCapacity };
+}
+
 function countWorkdays(start: Date, end: Date) {
   if (start > end) return 0;
   let count = 0;
@@ -210,6 +235,69 @@ function DateField({ label, value, onChange, hint }: { label: string; value: str
   );
 }
 
+type TeamCapacitySettings = Pick<ForecastSettings, 'teamMode' | 'members' | 'people' | 'speed' | 'efficiency'>;
+
+function TeamCapacityEditor({ settings, onChange }: { settings: TeamCapacitySettings; onChange: (patch: Partial<TeamCapacitySettings>) => void }) {
+  const team = getTeamCapacity(settings);
+
+  function selectMode(mode: TeamMode) {
+    if (mode === 'individual' && settings.members.length === 0) {
+      const count = Math.max(1, Math.round(settings.people));
+      onChange({
+        teamMode: mode,
+        members: Array.from({ length: count }, (_, index) => ({
+          id: makeId(),
+          name: `同仁 ${index + 1}`,
+          dailyBooks: settings.speed,
+        })),
+      });
+      return;
+    }
+    onChange({ teamMode: mode });
+  }
+
+  function updateMember(id: string, patch: Partial<TeamMember>) {
+    onChange({ members: settings.members.map((member) => (member.id === id ? { ...member, ...patch } : member)) });
+  }
+
+  return (
+    <div className="team-editor">
+      <div className="capacity-mode" role="group" aria-label="人力速度設定方式">
+        <button className={settings.teamMode === 'uniform' ? 'active' : ''} onClick={() => selectMode('uniform')}>所有人同一速度</button>
+        <button className={settings.teamMode === 'individual' ? 'active' : ''} onClick={() => selectMode('individual')}>逐人設定本數</button>
+      </div>
+
+      {settings.teamMode === 'uniform' ? (
+        <div className="form-card three-fields team-form-card">
+          <NumberField label="投入人數" value={settings.people} min={1} onChange={(value) => onChange({ people: value })} suffix="人" />
+          <NumberField label="每人每日速度" value={settings.speed} min={0.1} step={0.1} onChange={(value) => onChange({ speed: value })} suffix="本／日" />
+          <NumberField label="有效工時率" value={settings.efficiency} min={1} onChange={(value) => onChange({ efficiency: Math.min(value, 100) })} suffix="%" hint="扣除會議、複核與雜務" />
+        </div>
+      ) : (
+        <div className="member-card">
+          <div className="member-list">
+            <div className="member-row member-header"><span>人員</span><span>每日可完成本數</span><span></span></div>
+            {settings.members.map((member, index) => (
+              <div className="member-row" key={member.id}>
+                <input aria-label={`第 ${index + 1} 位人員姓名`} type="text" value={member.name} placeholder={`同仁 ${index + 1}`} onChange={(event) => updateMember(member.id, { name: event.target.value })} />
+                <span className="input-with-suffix member-speed"><input aria-label={`${member.name || `第 ${index + 1} 位人員`}每日可完成本數`} type="number" min="0" step="0.1" value={member.dailyBooks} onChange={(event) => updateMember(member.id, { dailyBooks: Number(event.target.value) })} /><b>本／日</b></span>
+                <button className="delete-row" aria-label={`刪除${member.name || `第 ${index + 1} 位人員`}`} onClick={() => onChange({ members: settings.members.filter((item) => item.id !== member.id) })}>×</button>
+              </div>
+            ))}
+          </div>
+          <button className="add-row" onClick={() => onChange({ members: [...settings.members, { id: makeId(), name: `同仁 ${settings.members.length + 1}`, dailyBooks: settings.speed }] })}>＋ 新增人員</button>
+        </div>
+      )}
+
+      <div className="team-summary">
+        <span>團隊人數 <strong>{team.teamCount} 人</strong></span>
+        <span>團隊每日產能 <strong>{compactNumber(team.dailyCapacity, 1)} 本</strong></span>
+        <small>{settings.teamMode === 'individual' ? '逐人本數視為實際日產能，不再乘有效工時率' : '已套用有效工時率'}</small>
+      </div>
+    </div>
+  );
+}
+
 function EmptyResult({ text }: { text: string }) {
   return (
     <div className="empty-result">
@@ -235,8 +323,8 @@ function ForecastWorkspace() {
       const saved = localStorage.getItem(FORECAST_KEY);
       if (saved) {
         try {
-          const parsed = JSON.parse(saved) as { settings: ForecastSettings; rows: HistoricalRow[] };
-          setSettings(parsed.settings);
+          const parsed = JSON.parse(saved) as { settings: Partial<ForecastSettings>; rows: HistoricalRow[] };
+          setSettings({ ...initialForecastSettings, ...parsed.settings, members: parsed.settings.members ?? [] });
           setRows(parsed.rows);
         } catch { /* keep defaults */ }
       }
@@ -260,7 +348,8 @@ function ForecastWorkspace() {
     const oldAnchor = parseDate(settings.historicalAnchor);
     const newAnchor = parseDate(settings.currentAnchor);
     const deadline = parseDate(settings.completionDate);
-    const dailyCapacity = settings.people * settings.speed * (settings.efficiency / 100);
+    const team = getTeamCapacity(settings);
+    const dailyCapacity = team.dailyCapacity;
     const mapped = validRows.map((row) => {
       const offset = businessDayDiff(parseDate(row.date), oldAnchor);
       return { ...row, offset, mappedDate: toISO(addBusinessDays(newAnchor, offset)) };
@@ -270,8 +359,7 @@ function ForecastWorkspace() {
     const firstDate = parseDate(mapped[0].mappedDate);
     const lastDate = parseDate(mapped[mapped.length - 1].mappedDate);
 
-    const simulate = (people: number) => {
-      const capacity = people * settings.speed * (settings.efficiency / 100);
+    const simulate = (capacity: number, collectPoints = false) => {
       let backlog = 0;
       let backlogAtDeadline = 0;
       let peakBacklog = 0;
@@ -284,7 +372,7 @@ function ForecastWorkspace() {
         const available = isWorkday(cursor) ? capacity : 0;
         backlog = Math.max(0, backlog + incoming - available);
         peakBacklog = Math.max(peakBacklog, backlog);
-        if (people === settings.people && (incoming > 0 || backlog > 0 || (cursor >= firstDate && cursor <= deadline))) {
+        if (collectPoints && (incoming > 0 || backlog > 0 || (cursor >= firstDate && cursor <= deadline))) {
           points.push({ date, demand: incoming, capacity: available, backlog });
         }
         if (date === settings.completionDate) backlogAtDeadline = backlog;
@@ -297,11 +385,11 @@ function ForecastWorkspace() {
       return { backlogAtDeadline: backlogAtDeadline + lateDemand, peakBacklog, finishDate, points };
     };
 
-    const current = simulate(settings.people);
+    const current = simulate(dailyCapacity, true);
     let requiredPeople: number | null = null;
-    if (!mapped.some((row) => parseDate(row.mappedDate) > deadline)) {
+    if (team.perPersonCapacity > 0 && !mapped.some((row) => parseDate(row.mappedDate) > deadline)) {
       for (let people = 1; people <= 999; people += 1) {
-        if (simulate(people).backlogAtDeadline <= 0) {
+        if (simulate(people * team.perPersonCapacity).backlogAtDeadline <= 0) {
           requiredPeople = people;
           break;
         }
@@ -315,7 +403,7 @@ function ForecastWorkspace() {
       ...row,
       backlog: current.points.find((point) => point.date === row.mappedDate)?.backlog ?? 0,
     }));
-    return { ...current, mapped: mappedWithBacklog, total, dailyCapacity, plannedDays, plannedCapacity, load, requiredPeople };
+    return { ...current, mapped: mappedWithBacklog, total, dailyCapacity, teamCount: team.teamCount, plannedDays, plannedCapacity, load, requiredPeople };
   }, [settings, validRows]);
 
   function updateRow(id: string, patch: Partial<HistoricalRow>) {
@@ -384,11 +472,7 @@ function ForecastWorkspace() {
         </div>
 
         <div className="section-heading"><div><span>STEP 3</span><h2>設定本季人力</h2></div></div>
-        <div className="form-card three-fields">
-          <NumberField label="投入人數" value={settings.people} min={1} onChange={(value) => setSettings({ ...settings, people: value })} suffix="人" />
-          <NumberField label="每人每日速度" value={settings.speed} min={0.1} step={0.1} onChange={(value) => setSettings({ ...settings, speed: value })} suffix="件" />
-          <NumberField label="有效工時率" value={settings.efficiency} min={1} onChange={(value) => setSettings({ ...settings, efficiency: Math.min(value, 100) })} suffix="%" hint="扣除會議、複核與雜務" />
-        </div>
+        <TeamCapacityEditor settings={settings} onChange={(patch) => setSettings((current) => ({ ...current, ...patch }))} />
       </section>
 
       <aside className="result-column">
@@ -409,7 +493,7 @@ function ForecastWorkspace() {
             <div className="metrics-grid">
               <Metric label="預估總量" value={`${compactNumber(result.total)} 件`} note={`${validRows.length} 個有量日期`} />
               <Metric label="負荷率" value={Number.isFinite(result.load) ? `${compactNumber(result.load)}%` : '—'} note={`${result.plannedDays} 個工作天`} />
-              <Metric label="最少人力" value={result.requiredPeople ? `${result.requiredPeople} 人` : '無法估算'} note={result.requiredPeople ? `目前 ${settings.people} 人` : '有財報在清完日後才到'} />
+              <Metric label="最少人力" value={result.requiredPeople ? `${result.requiredPeople} 人` : '無法估算'} note={result.requiredPeople ? `目前 ${result.teamCount} 人` : '有財報在清完日後才到'} />
               <Metric label="預估清完" value={result.finishDate ? formatDate(result.finishDate) : '超過一年'} note={`尖峰待辦 ${compactNumber(result.peakBacklog)} 件`} />
             </div>
 
@@ -459,8 +543,8 @@ function LiveWorkspace() {
       const saved = localStorage.getItem(LIVE_KEY);
       if (saved) {
         try {
-          const parsed = JSON.parse(saved) as { settings: LiveSettings; rows: LiveRow[] };
-          setSettings(parsed.settings);
+          const parsed = JSON.parse(saved) as { settings: Partial<LiveSettings>; rows: LiveRow[] };
+          setSettings({ ...initialLiveSettings, ...parsed.settings, members: parsed.settings.members ?? [] });
           setRows(parsed.rows);
         } catch { /* keep defaults */ }
       }
@@ -484,13 +568,14 @@ function LiveWorkspace() {
     const nextDate = addDays(latestDate, 1);
     const deadline = parseDate(settings.completionDate);
     const daysLeft = countWorkdays(nextDate, deadline);
-    const dailyCapacity = settings.people * settings.speed * (settings.efficiency / 100);
+    const team = getTeamCapacity(settings);
+    const dailyCapacity = team.dailyCapacity;
     const remainingCapacity = daysLeft * dailyCapacity;
     const feasible = outstanding <= remainingCapacity;
     const neededDaily = daysLeft > 0 ? outstanding / daysLeft : Infinity;
-    const requiredPeople = daysLeft > 0 && settings.speed > 0 ? Math.ceil(outstanding / (daysLeft * settings.speed * (settings.efficiency / 100))) : null;
+    const requiredPeople = daysLeft > 0 && team.perPersonCapacity > 0 ? Math.ceil(outstanding / (daysLeft * team.perPersonCapacity)) : null;
     const actualDays = new Set(validRows.filter((row) => isWorkday(parseDate(row.date))).map((row) => row.date)).size;
-    const observedPerPerson = actualDays > 0 && settings.people > 0 ? completed / actualDays / settings.people : 0;
+    const observedPerPerson = actualDays > 0 && team.teamCount > 0 ? completed / actualDays / team.teamCount : 0;
     let finishDate: Date | null = outstanding <= 0 ? latestDate : null;
     let remaining = outstanding;
     for (let cursor = nextDate; !finishDate && cursor <= addDays(nextDate, 365); cursor = addDays(cursor, 1)) {
@@ -504,7 +589,7 @@ function LiveWorkspace() {
       cumulativeCompleted += row.completed;
       return { ...row, backlog: Math.max(0, cumulativeReceived - cumulativeCompleted) };
     });
-    return { received, completed, backlog, outstanding, daysLeft, dailyCapacity, remainingCapacity, feasible, neededDaily, requiredPeople, observedPerPerson, finishDate, points };
+    return { received, completed, backlog, outstanding, daysLeft, dailyCapacity, teamCount: team.teamCount, remainingCapacity, feasible, neededDaily, requiredPeople, observedPerPerson, finishDate, points };
   }, [settings, validRows]);
 
   function updateRow(id: string, patch: Partial<LiveRow>) {
@@ -556,11 +641,7 @@ function LiveWorkspace() {
         </div>
 
         <div className="section-heading"><div><span>STEP 3</span><h2>設定目前人力</h2></div></div>
-        <div className="form-card three-fields">
-          <NumberField label="投入人數" value={settings.people} min={1} onChange={(value) => setSettings({ ...settings, people: value })} suffix="人" />
-          <NumberField label="每人每日速度" value={settings.speed} min={0.1} step={0.1} onChange={(value) => setSettings({ ...settings, speed: value })} suffix="件" />
-          <NumberField label="有效工時率" value={settings.efficiency} min={1} onChange={(value) => setSettings({ ...settings, efficiency: Math.min(value, 100) })} suffix="%" />
-        </div>
+        <TeamCapacityEditor settings={settings} onChange={(patch) => setSettings((current) => ({ ...current, ...patch }))} />
       </section>
 
       <aside className="result-column">
@@ -582,7 +663,7 @@ function LiveWorkspace() {
               <Metric label="目前待辦" value={`${compactNumber(result.backlog)} 件`} note={`累計收到 ${compactNumber(result.received)} 件`} />
               <Metric label="剩餘工作天" value={`${result.daysLeft} 天`} note={`可產出 ${compactNumber(result.remainingCapacity)} 件`} />
               <Metric label="每日需完成" value={Number.isFinite(result.neededDaily) ? `${compactNumber(result.neededDaily, 1)} 件` : '已無時間'} note={`目前產能 ${compactNumber(result.dailyCapacity, 1)} 件`} />
-              <Metric label="最少人力" value={result.requiredPeople ? `${result.requiredPeople} 人` : '無法估算'} note={`目前 ${settings.people} 人`} />
+              <Metric label="最少人力" value={result.requiredPeople ? `${result.requiredPeople} 人` : '無法估算'} note={`目前 ${result.teamCount} 人`} />
             </div>
 
             <div className="progress-card">
