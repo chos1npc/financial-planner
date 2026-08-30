@@ -568,7 +568,7 @@ function ForecastWorkspace() {
     const newAnchor = parseDate(settings.currentAnchor);
     const deadline = parseDate(settings.completionDate);
     const team = getTeamCapacity(settings);
-    const dailyCapacity = team.dailyCapacity;
+    const dailyCapacity = team.generalCapacity;
     const mapped = validRows.map((row) => {
       const offset = businessDayDiff(parseDate(row.date), oldAnchor);
       return { ...row, offset, mappedDate: toISO(addBusinessDays(newAnchor, offset)) };
@@ -606,9 +606,9 @@ function ForecastWorkspace() {
 
     const current = simulate(dailyCapacity, true);
     let requiredPeople: number | null = null;
-    if (team.perPersonCapacity > 0 && !mapped.some((row) => parseDate(row.mappedDate) > deadline)) {
+    if (team.generalPerPersonCapacity > 0 && !mapped.some((row) => parseDate(row.mappedDate) > deadline)) {
       for (let people = 1; people <= 999; people += 1) {
-        if (simulate(people * team.perPersonCapacity).backlogAtDeadline <= 0) {
+        if (simulate(people * team.generalPerPersonCapacity).backlogAtDeadline <= 0) {
           requiredPeople = people;
           break;
         }
