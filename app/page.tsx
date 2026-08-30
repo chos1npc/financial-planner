@@ -946,7 +946,7 @@ function LiveWorkspace() {
       const completion = normalizeDateValue(row[sheet.completionIndex], fallbackYear);
       if (key && completion && !completionByCompany.has(key)) completionByCompany.set(key, completion);
     }));
-    const updatedCompanies = settings.importedCompanies.map((company) => ({ ...company, completionDate: completionByCompany.get(companyIdentity(company.code, company.name)) ?? company.completionDate }));
+    const updatedCompanies = settings.importedCompanies.map((company) => ({ ...company, completionDate: completionByCompany.get(companyIdentity(company.code, company.name)) ?? null }));
     const today = localTodayISO();
     const start = settings.seasonStartDate;
     const counts = summarizeCompanies(updatedCompanies, start, today);
