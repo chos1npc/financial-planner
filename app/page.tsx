@@ -603,7 +603,6 @@ function Landing({ onSelect }: { onSelect: (mode: Exclude<Mode, null>) => void }
         <span className="local-badge">資料只存在這台裝置</span>
       </nav>
       <section className="hero" id="top">
-        <div className="hero-copy"><span className="eyebrow">FINANCIAL REPORT CAPACITY PLANNER</span><h1>這個忙季，<br />做得完嗎？</h1><p>用上一季的財報量預先安排人力，或在忙季中依每日實績重新估算。不再靠感覺加班，用數字提早看見缺口。</p></div>
         <div className="mode-grid" aria-label="選擇計算方式">
           <button className="mode-card forecast-card" onClick={() => onSelect('forecast')}><span className="card-number">01</span><span className="card-icon" aria-hidden="true">↗</span><span className="card-copy"><strong>我要預估</strong><small>忙季開始前</small><span>把上一季每日財報量換算到這一季，檢查現有人力是否足夠。</span></span><span className="card-action">開始規劃 <b>→</b></span></button>
           <button className="mode-card live-card" onClick={() => onSelect('live')}><span className="card-number">02</span><span className="card-icon" aria-hidden="true">●</span><span className="card-copy"><strong>即時計算</strong><small>忙季進行中</small><span>輸入每天實際收到與完成的數量，隨時確認是否能在期限前清完。</span></span><span className="card-action">更新進度 <b>→</b></span></button>

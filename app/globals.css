@@ -82,13 +82,11 @@ button { color: inherit; }
 }
 
 .hero {
-  width: min(1180px, calc(100% - 48px));
+  width: min(840px, calc(100% - 48px));
   margin: auto;
   padding: 72px 0;
-  display: grid;
-  grid-template-columns: .8fr 1.2fr;
+  display: flex;
   align-items: center;
-  gap: clamp(48px, 7vw, 108px);
 }
 
 .eyebrow {
@@ -100,24 +98,7 @@ button { color: inherit; }
   letter-spacing: .15em;
 }
 
-.hero-copy h1 {
-  margin: 0;
-  font-family: Georgia, "Noto Serif TC", serif;
-  font-size: clamp(52px, 7vw, 92px);
-  font-weight: 700;
-  line-height: .98;
-  letter-spacing: -.06em;
-}
-
-.hero-copy p {
-  max-width: 450px;
-  margin: 30px 0 0;
-  color: var(--muted);
-  font-size: 17px;
-  line-height: 1.9;
-}
-
-.mode-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.mode-grid { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
 
 .mode-card {
   min-height: 420px;
@@ -396,9 +377,7 @@ button { color: inherit; }
 .app-footer button { border: 0; border-bottom: 1px solid currentColor; background: transparent; color: #a05a4f; cursor: pointer; font-size: 11px; }
 
 @media (max-width: 850px) {
-  .hero { grid-template-columns: 1fr; padding: 48px 0 64px; }
-  .hero-copy { text-align: center; }
-  .hero-copy p { margin-inline: auto; }
+  .hero { padding: 48px 0 64px; }
   .workspace-grid { grid-template-columns: 1fr; }
   .result-column { position: static; }
   .workspace-header { grid-template-columns: auto 1fr auto; }
