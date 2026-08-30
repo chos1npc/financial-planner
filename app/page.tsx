@@ -245,7 +245,7 @@ function parseYear(value: unknown) {
   return match ? Number(match[1]) : undefined;
 }
 
-function parseWorkbookSheet(name: string, sheet: XLSX.WorkSheet): ParsedWorkbookSheet | null {
+function parseWorkbookSheet(name: string, sheet: XLSX.WorkSheet, requireAnnouncement = true): ParsedWorkbookSheet | null {
   const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: '' }) as unknown[][];
   const headers = (raw[0] ?? []).map((value) => String(value ?? '').trim());
   const codeIndex = findColumn(headers, ['comp_id', '公司碼', '公司代碼', '公司代號']);
@@ -254,7 +254,7 @@ function parseWorkbookSheet(name: string, sheet: XLSX.WorkSheet): ParsedWorkbook
   const quarterIndex = findColumn(headers, ['quarter', '季別']);
   const announcementIndex = findColumn(headers, ['公告日1', '公告日', '財報日']);
   const completionIndex = findColumn(headers, ['完成日', '完成日期']);
-  if ((codeIndex < 0 && nameIndex < 0) || periodIndex < 0 || quarterIndex < 0 || announcementIndex < 0) return null;
+  if ((codeIndex < 0 && nameIndex < 0) || periodIndex < 0 || quarterIndex < 0 || (requireAnnouncement && announcementIndex < 0)) return null;
   return {
     name,
     headers,
@@ -283,6 +283,10 @@ function syncDailyRows(rows: LiveRow[], startDate: string, endDate: string) {
     const old = previous.get(row.date);
     return old ? { ...row, id: old.id, received: old.received, completed: old.completed } : row;
   });
+}
+
+function reportWorkDate(announcementDate: string) {
+  return toISO(addBusinessDays(parseDate(announcementDate), 1));
 }
 
 function mergeCompany(existing: ImportedCompany, incoming: ImportedCompany) {
@@ -568,8 +572,11 @@ function ForecastWorkspace() {
   return (
     <div className="workspace-grid">
       <section className="input-column">
+        <div className="section-heading"><div><span>STEP 1</span><h2>設定本季人力</h2></div></div>
+        <TeamCapacityEditor settings={settings} onChange={(patch) => setSettings((current) => ({ ...current, ...patch }))} />
+
         <div className="section-heading">
-          <div><span>STEP 1</span><h2>設定換算基準</h2></div>
+          <div><span>STEP 2</span><h2>設定換算基準</h2></div>
           <details>
             <summary>T 日怎麼算？</summary>
             <p>從歷史 T 日往前或往後數工作日，星期六、星期日直接跳過，不增加 T 日數；再從本季 T 日以相同工作日數回推或前推。若輸入日期本身是週末，會與相鄰工作日共用同一個 T 值。</p>
@@ -582,7 +589,7 @@ function ForecastWorkspace() {
         </div>
 
         <div className="section-heading table-heading">
-          <div><span>STEP 2</span><h2>輸入歷史每日財報量</h2></div>
+          <div><span>STEP 3</span><h2>輸入歷史每日財報量</h2></div>
           <div className="inline-actions">
             <button className="text-button" onClick={() => setRows(forecastExample)}>載入範例</button>
             <button className="text-button" onClick={() => fileRef.current?.click()}>匯入 CSV</button>
@@ -607,8 +614,6 @@ function ForecastWorkspace() {
           <button className="add-row" onClick={() => setRows((current) => [...current, { id: makeId(), date: '', quantity: 0 }])}>＋ 新增一天</button>
         </div>
 
-        <div className="section-heading"><div><span>STEP 3</span><h2>設定本季人力</h2></div></div>
-        <TeamCapacityEditor settings={settings} onChange={(patch) => setSettings((current) => ({ ...current, ...patch }))} />
       </section>
 
       <aside className="result-column">
@@ -668,10 +673,13 @@ function LiveWorkspace() {
   const [settings, setSettings] = useState(initialLiveSettings);
   const [rows, setRows] = useState<LiveRow[]>(() => createDailyRows(initialLiveSettings.seasonStartDate, localTodayISO()));
   const [hydrated, setHydrated] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [workbookName, setWorkbookName] = useState('');
-  const [workbookSheets, setWorkbookSheets] = useState<ParsedWorkbookSheet[]>([]);
-  const [importSheet, setImportSheet] = useState('__all__');
+  const companyFileRef = useRef<HTMLInputElement>(null);
+  const manpowerFileRef = useRef<HTMLInputElement>(null);
+  const [companyWorkbookName, setCompanyWorkbookName] = useState('');
+  const [manpowerWorkbookName, setManpowerWorkbookName] = useState('');
+  const [companyWorkbookSheets, setCompanyWorkbookSheets] = useState<ParsedWorkbookSheet[]>([]);
+  const [manpowerWorkbookSheets, setManpowerWorkbookSheets] = useState<ParsedWorkbookSheet[]>([]);
+  const [companyImportSheet, setCompanyImportSheet] = useState('__all__');
   const [importAnnyymm, setImportAnnyymm] = useState('');
   const [importQuarter, setImportQuarter] = useState('');
   const [importError, setImportError] = useState('');
@@ -747,7 +755,7 @@ function LiveWorkspace() {
     setRows((current) => syncDailyRows(current, value, localTodayISO()));
   }
 
-  async function readWorkbook(event: ChangeEvent<HTMLInputElement>) {
+  async function readWorkbook(event: ChangeEvent<HTMLInputElement>, kind: 'company' | 'manpower') {
     const file = event.target.files?.[0];
     if (!file) return;
     setImportError('');
@@ -755,24 +763,29 @@ function LiveWorkspace() {
     try {
       const data = await file.arrayBuffer();
       const workbook = XLSX.read(data, { type: 'array', raw: false, cellDates: false, bookVBA: true });
-      const sheets = workbook.SheetNames.map((name) => parseWorkbookSheet(name, workbook.Sheets[name])).filter((sheet): sheet is ParsedWorkbookSheet => Boolean(sheet));
-      if (!sheets.length) throw new Error('找不到可辨識的工作表（需要公司代碼、annyymm、quarter、公告日欄位）。');
-      setWorkbookName(file.name);
-      setWorkbookSheets(sheets);
-      setImportSheet('__all__');
+      const sheets = workbook.SheetNames.map((name) => parseWorkbookSheet(name, workbook.Sheets[name], kind === 'company')).filter((sheet): sheet is ParsedWorkbookSheet => Boolean(sheet));
+      if (!sheets.length) throw new Error(kind === 'company' ? '找不到可辨識的公司清單工作表（需要公司代碼、annyymm、quarter、公告日欄位）。' : '找不到可辨識的人力工作表（需要公司代碼、annyymm、quarter、完成日欄位）。');
+      if (kind === 'company') {
+        setCompanyWorkbookName(file.name);
+        setCompanyWorkbookSheets(sheets);
+        setCompanyImportSheet('__all__');
+      } else {
+        setManpowerWorkbookName(file.name);
+        setManpowerWorkbookSheets(sheets);
+      }
       const periods = Array.from(new Set(sheets.flatMap((sheet) => sheet.rows.map((row) => row[sheet.periodIndex]).filter(Boolean)))).sort();
       const quarters = Array.from(new Set(sheets.flatMap((sheet) => sheet.rows.map((row) => row[sheet.quarterIndex]).filter(Boolean)))).sort();
-      setImportAnnyymm(periods.includes('2026-06-01') ? '2026-06-01' : (periods[0] ?? ''));
-      setImportQuarter(quarters.includes('2') ? '2' : (quarters[0] ?? ''));
+      if (!importAnnyymm || !periods.includes(importAnnyymm)) setImportAnnyymm(periods.includes('2026-06-01') ? '2026-06-01' : (periods[0] ?? ''));
+      if (!importQuarter || !quarters.includes(importQuarter)) setImportQuarter(quarters.includes('2') ? '2' : (quarters[0] ?? ''));
     } catch (error) {
       setImportError(error instanceof Error ? error.message : '檔案讀取失敗，請確認是 Excel 或 XLSM。');
     }
     event.target.value = '';
   }
 
-  function applyWorkbookImport() {
-    if (!workbookSheets.length || !importAnnyymm || !importQuarter) return;
-    const selectedSheets = importSheet === '__all__' ? workbookSheets : workbookSheets.filter((sheet) => sheet.name === importSheet);
+  function applyCompanyImport() {
+    if (!companyWorkbookSheets.length || !importAnnyymm || !importQuarter) return;
+    const selectedSheets = companyImportSheet === '__all__' ? companyWorkbookSheets : companyWorkbookSheets.filter((sheet) => sheet.name === companyImportSheet);
     const companyMap = new Map<string, ImportedCompany>();
     let rawCount = 0;
     const fallbackYear = parseYear(importAnnyymm);
@@ -787,8 +800,8 @@ function LiveWorkspace() {
         id: key,
         code,
         name: name || code,
-        announcementDate: normalizeDateValue(row[sheet.announcementIndex], fallbackYear),
-        completionDate: sheet.completionIndex >= 0 ? normalizeDateValue(row[sheet.completionIndex], fallbackYear) : null,
+        announcementDate: sheet.announcementIndex >= 0 ? normalizeDateValue(row[sheet.announcementIndex], fallbackYear) : null,
+        completionDate: null,
       };
       companyMap.set(key, companyMap.has(key) ? mergeCompany(companyMap.get(key)!, company) : company);
     }));
@@ -797,32 +810,56 @@ function LiveWorkspace() {
       setImportError('在目前選擇的 annyymm 與 quarter 找不到公司資料。');
       return;
     }
+    setSettings((current) => ({ ...current, importedCompanies: companies }));
+    setImportSummary({ total: companies.length, announced: companies.filter((company) => Boolean(company.announcementDate)).length, pending: companies.filter((company) => !company.announcementDate).length, duplicates: Math.max(0, rawCount - companies.length) });
+    setImportError('');
+  }
+
+  function applyManpowerImport() {
+    if (!manpowerWorkbookSheets.length || !settings.importedCompanies.length || !importAnnyymm || !importQuarter) {
+      setImportError(!settings.importedCompanies.length ? '請先匯入公司財報清單，再匯入人力完成紀錄。' : '請先選擇 annyymm 與 quarter。');
+      return;
+    }
+    const normalizeName = (value: string) => value.trim().toLocaleLowerCase();
+    const people = settings.members.filter((person) => person.name.trim());
+    if (!people.length) {
+      setImportError('請先在 Step 1 選擇「逐人設定本數」並輸入人名，系統會用人名尋找對應工作表。');
+      return;
+    }
+    const selectedSheets = people.flatMap((person) => manpowerWorkbookSheets.filter((sheet) => normalizeName(sheet.name) === normalizeName(person.name)));
+    if (!selectedSheets.length) {
+      setImportError(`找不到與輸入人名相同的工作表：${people.map((person) => person.name).join('、')}`);
+      return;
+    }
+    const fallbackYear = parseYear(importAnnyymm);
+    const completionByCompany = new Map<string, string>();
+    selectedSheets.forEach((sheet) => sheet.rows.forEach((row) => {
+      if (String(row[sheet.periodIndex] ?? '').trim() !== importAnnyymm || String(row[sheet.quarterIndex] ?? '').trim() !== importQuarter || sheet.completionIndex < 0) return;
+      const code = String(row[sheet.codeIndex] ?? '').trim();
+      const name = String(row[sheet.nameIndex] ?? '').trim();
+      const key = code || name;
+      const completion = normalizeDateValue(row[sheet.completionIndex], fallbackYear);
+      if (key && completion && !completionByCompany.has(key)) completionByCompany.set(key, completion);
+    }));
+    const updatedCompanies = settings.importedCompanies.map((company) => ({ ...company, completionDate: completionByCompany.get(company.code || company.name) ?? company.completionDate }));
     const today = localTodayISO();
     const start = settings.seasonStartDate;
     const receivedByDate = new Map<string, number>();
     const completedByDate = new Map<string, number>();
     let announced = 0;
     let pending = 0;
-    companies.forEach((company) => {
-      if (company.announcementDate && company.announcementDate >= start && company.announcementDate <= today) {
+    updatedCompanies.forEach((company) => {
+      const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
+      if (workDate && workDate >= start && workDate <= today) {
         announced += 1;
-        receivedByDate.set(company.announcementDate, (receivedByDate.get(company.announcementDate) ?? 0) + 1);
-      } else {
-        pending += 1;
-      }
-      if (company.completionDate && company.completionDate >= start && company.completionDate <= today) {
-        completedByDate.set(company.completionDate, (completedByDate.get(company.completionDate) ?? 0) + 1);
-      }
+        receivedByDate.set(workDate, (receivedByDate.get(workDate) ?? 0) + 1);
+      } else if (!workDate || workDate > today) pending += 1;
+      if (company.completionDate && company.completionDate >= start && company.completionDate <= today) completedByDate.set(company.completionDate, (completedByDate.get(company.completionDate) ?? 0) + 1);
     });
-    const importedRows = createDailyRows(start, today).map((row) => ({
-      ...row,
-      received: receivedByDate.get(row.date) ?? 0,
-      completed: completedByDate.get(row.date) ?? 0,
-    }));
-    setRows(importedRows);
-    setSettings((current) => ({ ...current, expectedRemaining: pending, importedCompanies: companies }));
-    setImportSummary({ total: companies.length, announced, pending, duplicates: Math.max(0, rawCount - companies.length) });
-    setImportError('');
+    setRows(createDailyRows(start, today).map((row) => ({ ...row, received: receivedByDate.get(row.date) ?? 0, completed: completedByDate.get(row.date) ?? 0 })));
+    setSettings((current) => ({ ...current, expectedRemaining: pending, importedCompanies: updatedCompanies }));
+    setImportSummary({ total: updatedCompanies.length, announced, pending, duplicates: 0 });
+    setImportError(`已依 ${selectedSheets.map((sheet) => sheet.name).join('、')} 的完成日更新實績。`);
   }
 
   const maxTrend = result ? Math.max(1, ...result.points.flatMap((point) => [point.received, point.completed, point.backlog])) : 1;
@@ -830,22 +867,27 @@ function LiveWorkspace() {
   return (
     <div className="workspace-grid">
       <section className="input-column">
-        <div className="section-heading"><div><span>STEP 0</span><h2>設定忙季日期</h2></div></div>
+        <div className="section-heading"><div><span>STEP 1</span><h2>設定目前人力</h2></div></div>
+        <TeamCapacityEditor settings={settings} onChange={(patch) => setSettings((current) => ({ ...current, ...patch }))} />
+
+        <div className="section-heading"><div><span>STEP 2</span><h2>設定忙季日期</h2></div></div>
         <div className="form-card three-fields season-date-card">
           <WeekdayDateField label="忙季開始日" value={settings.seasonStartDate} onChange={updateSeasonStart} />
           <WeekdayDateField label="T 日" value={settings.anchorDate} onChange={(value) => setSettings({ ...settings, anchorDate: value })} />
           <WeekdayDateField label="忙季結束日" value={settings.completionDate} onChange={(value) => setSettings({ ...settings, completionDate: value })} />
         </div>
-        <div className="section-heading"><div><span>STEP 1</span><h2>更新每日實績</h2></div><div className="inline-actions"><button className="text-button" onClick={() => setRows(liveExample)}>載入範例</button><button className="text-button" onClick={() => setRows((current) => syncDailyRows(current, settings.seasonStartDate, localTodayISO()))}>補齊到今天</button><button className="text-button" onClick={() => fileRef.current?.click()}>選擇 Excel／XLSM</button><input ref={fileRef} className="sr-only" type="file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" onChange={readWorkbook} /></div></div>
+        <div className="section-heading"><div><span>STEP 3</span><h2>匯入公司與完成紀錄</h2></div><div className="inline-actions"><button className="text-button" onClick={() => setRows(liveExample)}>載入範例</button><button className="text-button" onClick={() => setRows((current) => syncDailyRows(current, settings.seasonStartDate, localTodayISO()))}>補齊到今天</button></div></div>
         <div className="import-panel">
-          <p>從忙季開始日自動列出至今天的工作日（週六、日不列入）。匯入後會依公告日計算收到量、依完成日計算完成量，空白公告日會放入「預計後續還會收到」。</p>
-          {workbookName && <div className="import-file-name">已選擇：<strong>{workbookName}</strong></div>}
-          {workbookSheets.length > 0 && <div className="import-controls">
-            <label className="field"><span className="field-label">讀取工作表</span><select value={importSheet} onChange={(event) => setImportSheet(event.target.value)}><option value="__all__">全部辨識工作表（自動去重）</option>{workbookSheets.map((sheet) => <option key={sheet.name} value={sheet.name}>{sheet.name}</option>)}</select></label>
-            <label className="field"><span className="field-label">annyymm</span><select value={importAnnyymm} onChange={(event) => setImportAnnyymm(event.target.value)}>{Array.from(new Set(workbookSheets.flatMap((sheet) => sheet.rows.map((row) => row[sheet.periodIndex]).filter(Boolean)))).sort().map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-            <label className="field"><span className="field-label">quarter</span><select value={importQuarter} onChange={(event) => setImportQuarter(event.target.value)}>{Array.from(new Set(workbookSheets.flatMap((sheet) => sheet.rows.map((row) => row[sheet.quarterIndex]).filter(Boolean)))).sort().map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-            <button className="primary-button import-button" onClick={applyWorkbookImport}>匯入公司財報清單</button>
+          <p>公司清單與人力完成紀錄是兩個檔案。先匯入公司清單，再依上方輸入的人名尋找人力檔案中同名工作表。公告日會往後對應到下一個工作日：忙季第一天會包含忙季開始日前一個工作日公告的財報。</p>
+          <div className="import-file-row"><span>公司財報清單（公告日）</span><button className="text-button" onClick={() => companyFileRef.current?.click()}>選擇 Excel／XLSM</button><input ref={companyFileRef} className="sr-only" type="file" accept=".xlsx,.xlsm" onChange={(event) => readWorkbook(event, 'company')} />{companyWorkbookName && <strong>{companyWorkbookName}</strong>}</div>
+          <div className="import-file-row"><span>人力完成紀錄（依人名找工作表）</span><button className="text-button" onClick={() => manpowerFileRef.current?.click()}>選擇 Excel／XLSM</button><input ref={manpowerFileRef} className="sr-only" type="file" accept=".xlsx,.xlsm" onChange={(event) => readWorkbook(event, 'manpower')} />{manpowerWorkbookName && <strong>{manpowerWorkbookName}</strong>}</div>
+          {companyWorkbookSheets.length > 0 && <div className="import-controls">
+            <label className="field"><span className="field-label">公司清單工作表</span><select value={companyImportSheet} onChange={(event) => setCompanyImportSheet(event.target.value)}><option value="__all__">全部辨識工作表（自動去重）</option>{companyWorkbookSheets.map((sheet) => <option key={sheet.name} value={sheet.name}>{sheet.name}</option>)}</select></label>
+            <label className="field"><span className="field-label">annyymm</span><select value={importAnnyymm} onChange={(event) => setImportAnnyymm(event.target.value)}>{Array.from(new Set(companyWorkbookSheets.flatMap((sheet) => sheet.rows.map((row) => row[sheet.periodIndex]).filter(Boolean)))).sort().map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+            <label className="field"><span className="field-label">quarter</span><select value={importQuarter} onChange={(event) => setImportQuarter(event.target.value)}>{Array.from(new Set(companyWorkbookSheets.flatMap((sheet) => sheet.rows.map((row) => row[sheet.quarterIndex]).filter(Boolean)))).sort().map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+            <button className="primary-button import-button" onClick={applyCompanyImport}>匯入公司財報清單</button>
           </div>}
+          {manpowerWorkbookSheets.length > 0 && <button className="primary-button manpower-import-button" onClick={applyManpowerImport}>依人名匯入完成日期並更新實績</button>}
           {importError && <div className="import-error">{importError}</div>}
           {importSummary && <div className="import-summary"><span>唯一公司 <strong>{compactNumber(importSummary.total)}</strong></span><span>已公告 <strong>{compactNumber(importSummary.announced)}</strong></span><span>尚未公告 <strong>{compactNumber(importSummary.pending)}</strong></span><span>去除重複 <strong>{compactNumber(importSummary.duplicates)}</strong></span></div>}
         </div>
@@ -869,14 +911,12 @@ function LiveWorkspace() {
 
         {settings.importedCompanies.length > 0 && <details className="company-list-card"><summary>查看已匯入的 {compactNumber(settings.importedCompanies.length)} 家唯一公司</summary><div className="company-list">{settings.importedCompanies.map((company) => <div key={company.id}><span>{company.code || '—'}</span><strong>{company.name}</strong><small>{company.announcementDate ? `公告 ${company.announcementDate}` : '尚未公告'}{company.completionDate ? `・完成 ${company.completionDate}` : ''}</small></div>)}</div></details>}
 
-        <div className="section-heading"><div><span>STEP 2</span><h2>設定剩餘工作</h2></div></div>
+        <div className="section-heading"><div><span>STEP 4</span><h2>設定剩餘工作</h2></div></div>
         <div className="form-card two-fields">
           <NumberField label="期初未完成" value={settings.openingBacklog} onChange={(value) => setSettings({ ...settings, openingBacklog: value })} suffix="件" hint="第一筆實績前就存在的待辦" />
           <NumberField label="預計後續還會收到" value={settings.expectedRemaining} onChange={(value) => setSettings({ ...settings, expectedRemaining: value })} suffix="件" hint="不知道可先填 0，再做保守情境" />
         </div>
 
-        <div className="section-heading"><div><span>STEP 3</span><h2>設定目前人力</h2></div></div>
-        <TeamCapacityEditor settings={settings} onChange={(patch) => setSettings((current) => ({ ...current, ...patch }))} />
       </section>
 
       <aside className="result-column">

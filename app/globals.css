@@ -364,10 +364,14 @@ button { color: inherit; }
 .import-panel { margin-top: -8px; padding: 14px 16px; border: 1px dashed #cbd3cb; border-radius: 4px 14px 4px 4px; background: rgba(255,255,255,.48); color: var(--muted); font-size: 11px; line-height: 1.55; }
 .import-panel p { margin: 0 0 12px; }
 .import-file-name { margin-bottom: 12px; color: var(--ink); }
+.import-file-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 9px 0; border-top: 1px solid #dce1dc; color: var(--ink); }
+.import-file-row > span { min-width: 190px; font-weight: 800; }
+.import-file-row > strong { color: var(--muted); font-size: 10px; font-weight: 600; }
 .import-controls { display: grid; grid-template-columns: 1.5fr 1fr .7fr auto; align-items: end; gap: 10px; }
 .import-controls select { width: 100%; height: 40px; padding: 0 8px; border: 1px solid #c8cec8; border-radius: 3px; background: white; color: var(--ink); }
 .primary-button { height: 40px; padding: 0 14px; border: 0; border-radius: 3px; background: var(--teal); color: white; cursor: pointer; font-size: 11px; font-weight: 800; }
 .primary-button:hover { background: #123f45; }
+.manpower-import-button { margin-top: 12px; }
 .import-error { margin-top: 10px; color: var(--coral-dark); font-weight: 800; }
 .import-summary { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #dce1dc; }
 .import-summary strong { margin-left: 4px; color: var(--ink); }
@@ -496,6 +500,8 @@ button { color: inherit; }
   .two-fields { grid-template-columns: 1fr; }
   .import-controls { grid-template-columns: 1fr 1fr; }
   .import-button { grid-column: 1 / -1; }
+  .import-file-row { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .import-file-row > span { min-width: 0; }
   .company-list > div { grid-template-columns: 60px 1fr; }
   .company-list small { grid-column: 2; }
   .capacity-mode { width: 100%; }
