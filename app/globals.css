@@ -327,13 +327,13 @@ button { color: inherit; }
 .member-list { max-height: 410px; overflow-y: auto; }
 .member-row {
   display: grid;
-  grid-template-columns: minmax(140px, 1.25fr) minmax(170px, 1fr) 30px;
+  grid-template-columns: minmax(140px, 1.1fr) minmax(140px, 1fr) minmax(170px, 1fr) 30px;
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
   border-bottom: 1px solid #e5e7e1;
 }
-.member-row > input {
+.member-row > input, .member-row > select {
   width: 100%;
   height: 40px;
   padding: 0 10px;
@@ -342,7 +342,7 @@ button { color: inherit; }
   background: white;
   color: var(--ink);
 }
-.member-row > input:focus { border-color: var(--teal); outline: 2px solid rgba(23,79,86,.12); }
+.member-row > input:focus, .member-row > select:focus { border-color: var(--teal); outline: 2px solid rgba(23,79,86,.12); }
 .member-header { padding-block: 12px; background: #eef0eb; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
 .member-speed { height: 40px; }
 .team-summary {
@@ -515,7 +515,7 @@ button { color: inherit; }
   .company-list small { grid-column: 2; }
   .capacity-mode { width: 100%; }
   .capacity-mode button { flex: 1; padding-inline: 8px; }
-  .member-row { grid-template-columns: minmax(105px, 1fr) minmax(145px, 1fr) 28px; padding-inline: 10px; gap: 8px; }
+  .member-row { grid-template-columns: minmax(105px, 1fr) minmax(125px, 1fr) minmax(145px, 1fr) 28px; padding-inline: 10px; gap: 8px; }
   .team-summary { align-items: flex-start; flex-wrap: wrap; gap: 8px 18px; }
   .team-summary small { width: 100%; margin-left: 0; }
   .section-heading { align-items: flex-end; }

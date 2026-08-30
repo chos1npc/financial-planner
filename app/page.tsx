@@ -5,15 +5,17 @@ import * as XLSX from 'xlsx';
 
 type Mode = 'forecast' | 'live' | null;
 type TeamMode = 'uniform' | 'individual';
-type TeamMember = { id: string; name: string; dailyBooks: number };
+type WorkCategory = 'general' | 'nonGeneral';
+type TeamMember = { id: string; name: string; dailyBooks: number; category: WorkCategory };
 type HistoricalRow = { id: string; date: string; quantity: number };
 type LiveRow = { id: string; date: string; received: number; completed: number };
-type ImportedCompany = { id: string; code: string; name: string; announcementDate: string | null; completionDate: string | null };
+type ImportedCompany = { id: string; code: string; name: string; finInd: string; announcementDate: string | null; completionDate: string | null };
 type DailyComparison = { date: string; newCodes: string[]; availableCodes: string[]; completedCodes: string[]; matchedCodes: string[]; completedOnlyCodes: string[]; endingBacklogCodes: string[] };
 type WorkbookSheet = { name: string; headers: string[]; rows: string[][] };
 type ParsedWorkbookSheet = WorkbookSheet & {
   codeIndex: number;
   nameIndex: number;
+  finIndIndex: number;
   periodIndex: number;
   quarterIndex: number;
   announcementIndex: number;
@@ -49,6 +51,10 @@ const DAY = 86_400_000;
 const FORECAST_KEY = 'busy-season-forecast-v1';
 const LIVE_KEY = 'busy-season-live-v1';
 
+function createDefaultMembers(dailyBooks: number): TeamMember[] {
+  return Array.from({ length: 4 }, (_, index) => ({ id: `default-member-${index + 1}`, name: `同仁 ${index + 1}`, dailyBooks, category: 'general' as WorkCategory }));
+}
+
 const initialForecastSettings: ForecastSettings = {
   defaultsVersion: 3,
   historicalAnchor: '2025-11-14',
@@ -57,8 +63,8 @@ const initialForecastSettings: ForecastSettings = {
   people: 4,
   speed: 10,
   efficiency: 85,
-  teamMode: 'uniform',
-  members: [],
+  teamMode: 'individual',
+  members: createDefaultMembers(10),
 };
 
 const initialLiveSettings: LiveSettings = {
@@ -69,8 +75,8 @@ const initialLiveSettings: LiveSettings = {
   people: 4,
   speed: 9,
   efficiency: 85,
-  teamMode: 'uniform',
-  members: [],
+  teamMode: 'individual',
+  members: createDefaultMembers(9),
   openingBacklog: 0,
   expectedRemaining: 150,
   importedCompanies: [],
@@ -164,19 +170,24 @@ function compactNumber(value: number, digits = 0) {
   return new Intl.NumberFormat('zh-TW', { maximumFractionDigits: digits }).format(value);
 }
 
-function getTeamCapacity(settings: Pick<ForecastSettings, 'teamMode' | 'members' | 'people' | 'speed' | 'efficiency'>) {
-  if (settings.teamMode === 'individual') {
-    const dailyCapacity = settings.members.reduce((sum, member) => sum + Math.max(0, member.dailyBooks), 0);
-    const teamCount = settings.members.length;
-    return {
-      teamCount,
-      dailyCapacity,
-      perPersonCapacity: teamCount > 0 ? dailyCapacity / teamCount : 0,
-    };
-  }
-  const teamCount = Math.max(0, settings.people);
-  const perPersonCapacity = Math.max(0, settings.speed) * (settings.efficiency / 100);
-  return { teamCount, perPersonCapacity, dailyCapacity: teamCount * perPersonCapacity };
+function getTeamCapacity(settings: { members: TeamMember[] }) {
+  const generalMembers = settings.members.filter((member) => member.category !== 'nonGeneral');
+  const nonGeneralMembers = settings.members.filter((member) => member.category === 'nonGeneral');
+  const generalCapacity = generalMembers.reduce((sum, member) => sum + Math.max(0, member.dailyBooks), 0);
+  const nonGeneralCapacity = nonGeneralMembers.reduce((sum, member) => sum + Math.max(0, member.dailyBooks), 0);
+  const dailyCapacity = generalCapacity + nonGeneralCapacity;
+  const teamCount = settings.members.length;
+  return {
+    teamCount,
+    dailyCapacity,
+    perPersonCapacity: teamCount > 0 ? dailyCapacity / teamCount : 0,
+    generalCount: generalMembers.length,
+    nonGeneralCount: nonGeneralMembers.length,
+    generalCapacity,
+    nonGeneralCapacity,
+    generalPerPersonCapacity: generalMembers.length > 0 ? generalCapacity / generalMembers.length : 0,
+    nonGeneralPerPersonCapacity: nonGeneralMembers.length > 0 ? nonGeneralCapacity / nonGeneralMembers.length : 0,
+  };
 }
 
 function countWorkdays(start: Date, end: Date) {
@@ -254,6 +265,7 @@ function parseWorkbookSheet(name: string, sheet: XLSX.WorkSheet, requireAnnounce
   const headers = (raw[0] ?? []).map((value) => String(value ?? '').trim());
   const codeIndex = findColumn(headers, ['comp_id', '公司碼', '公司代碼', '公司代號']);
   const nameIndex = findColumn(headers, ['comp_sname', '公司名稱', '公司簡稱', '公司名']);
+  const finIndIndex = findColumn(headers, ['fin_ind', 'fin ind', '產業別']);
   const periodIndex = findColumn(headers, ['annyymm', '財務年月']);
   const quarterIndex = findColumn(headers, ['quarter', '季別']);
   const announcementIndex = findColumn(headers, ['公告日1', '公告日', '財報日']);
@@ -265,6 +277,7 @@ function parseWorkbookSheet(name: string, sheet: XLSX.WorkSheet, requireAnnounce
     rows: raw.slice(1).map((row) => row.map((value) => String(value ?? '').trim())),
     codeIndex,
     nameIndex,
+    finIndIndex,
     periodIndex,
     quarterIndex,
     announcementIndex,
@@ -342,6 +355,7 @@ function mergeCompany(existing: ImportedCompany, incoming: ImportedCompany) {
   return {
     ...existing,
     name: existing.name || incoming.name,
+    finInd: existing.finInd || incoming.finInd,
     announcementDate: existing.announcementDate ?? incoming.announcementDate,
     completionDate: existing.completionDate ?? incoming.completionDate,
   };
@@ -351,6 +365,10 @@ function companyIdentity(code: string, name: string) {
   const normalizedCode = code.trim();
   if (normalizedCode) return /^\d+$/.test(normalizedCode) ? normalizedCode.replace(/^0+(?=\d)/, '') : normalizedCode.toLocaleLowerCase();
   return name.trim().toLocaleLowerCase();
+}
+
+function isGeneralIndustry(company: ImportedCompany) {
+  return String(company.finInd ?? '').trim().toLocaleUpperCase() === 'F';
 }
 
 function Metric({ label, value, note }: { label: string; value: string; note: string }) {
@@ -423,26 +441,10 @@ function WeekdayDateField({ label, value, onChange }: { label: string; value: st
   );
 }
 
-type TeamCapacitySettings = Pick<ForecastSettings, 'teamMode' | 'members' | 'people' | 'speed' | 'efficiency'>;
+type TeamCapacitySettings = Pick<ForecastSettings, 'members'>;
 
 function TeamCapacityEditor({ settings, onChange }: { settings: TeamCapacitySettings; onChange: (patch: Partial<TeamCapacitySettings>) => void }) {
   const team = getTeamCapacity(settings);
-
-  function selectMode(mode: TeamMode) {
-    if (mode === 'individual' && settings.members.length === 0) {
-      const count = Math.max(1, Math.round(settings.people));
-      onChange({
-        teamMode: mode,
-        members: Array.from({ length: count }, (_, index) => ({
-          id: makeId(),
-          name: `同仁 ${index + 1}`,
-          dailyBooks: settings.speed,
-        })),
-      });
-      return;
-    }
-    onChange({ teamMode: mode });
-  }
 
   function updateMember(id: string, patch: Partial<TeamMember>) {
     onChange({ members: settings.members.map((member) => (member.id === id ? { ...member, ...patch } : member)) });
@@ -450,37 +452,28 @@ function TeamCapacityEditor({ settings, onChange }: { settings: TeamCapacitySett
 
   return (
     <div className="team-editor">
-      <div className="capacity-mode" role="group" aria-label="人力速度設定方式">
-        <button className={settings.teamMode === 'uniform' ? 'active' : ''} onClick={() => selectMode('uniform')}>所有人同一速度</button>
-        <button className={settings.teamMode === 'individual' ? 'active' : ''} onClick={() => selectMode('individual')}>逐人設定本數</button>
-      </div>
-
-      {settings.teamMode === 'uniform' ? (
-        <div className="form-card three-fields team-form-card">
-          <NumberField label="投入人數" value={settings.people} min={1} onChange={(value) => onChange({ people: value })} suffix="人" />
-          <NumberField label="每人每日速度" value={settings.speed} min={0.1} step={0.1} onChange={(value) => onChange({ speed: value })} suffix="本／日" />
-          <NumberField label="有效工時率" value={settings.efficiency} min={1} onChange={(value) => onChange({ efficiency: Math.min(value, 100) })} suffix="%" hint="扣除會議、複核與雜務" />
-        </div>
-      ) : (
-        <div className="member-card">
+      <div className="member-card">
           <div className="member-list">
-            <div className="member-row member-header"><span>人員</span><span>每日可完成本數</span><span></span></div>
+            <div className="member-row member-header"><span>人員</span><span>產業類型</span><span>每日可完成本數</span><span></span></div>
             {settings.members.map((member, index) => (
               <div className="member-row" key={member.id}>
                 <input aria-label={`第 ${index + 1} 位人員姓名`} type="text" value={member.name} placeholder={`同仁 ${index + 1}`} onChange={(event) => updateMember(member.id, { name: event.target.value })} />
+                <select aria-label={`${member.name || `第 ${index + 1} 位人員`}負責產業類型`} value={member.category ?? 'general'} onChange={(event) => updateMember(member.id, { category: event.target.value as WorkCategory })}>
+                  <option value="general">一般產業（F）</option>
+                  <option value="nonGeneral">非一般產業</option>
+                </select>
                 <span className="input-with-suffix member-speed"><input aria-label={`${member.name || `第 ${index + 1} 位人員`}每日可完成本數`} type="number" min="0" step="0.1" value={member.dailyBooks} onChange={(event) => updateMember(member.id, { dailyBooks: Number(event.target.value) })} /><b>本／日</b></span>
                 <button className="delete-row" aria-label={`刪除${member.name || `第 ${index + 1} 位人員`}`} onClick={() => onChange({ members: settings.members.filter((item) => item.id !== member.id) })}>×</button>
               </div>
             ))}
           </div>
-          <button className="add-row" onClick={() => onChange({ members: [...settings.members, { id: makeId(), name: `同仁 ${settings.members.length + 1}`, dailyBooks: settings.speed }] })}>＋ 新增人員</button>
-        </div>
-      )}
+          <button className="add-row" onClick={() => onChange({ members: [...settings.members, { id: makeId(), name: `同仁 ${settings.members.length + 1}`, dailyBooks: settings.members[0]?.dailyBooks ?? 9, category: 'general' }] })}>＋ 新增人員</button>
+      </div>
 
       <div className="team-summary">
         <span>團隊人數 <strong>{team.teamCount} 人</strong></span>
         <span>團隊每日產能 <strong>{compactNumber(team.dailyCapacity, 1)} 本</strong></span>
-        <small>{settings.teamMode === 'individual' ? '逐人本數視為實際日產能，不再乘有效工時率' : '已套用有效工時率'}</small>
+        <small>一般 {team.generalCount} 人／{compactNumber(team.generalCapacity, 1)} 本，非一般 {team.nonGeneralCount} 人／{compactNumber(team.nonGeneralCapacity, 1)} 本</small>
       </div>
     </div>
   );
@@ -515,12 +508,18 @@ function ForecastWorkspace() {
           const migrateDefaultPeople = parsed.settings.defaultsVersion === undefined && parsed.settings.people === 12;
           const savedMembers = parsed.settings.members ?? [];
           const migrateDefaultMembers = (parsed.settings.defaultsVersion ?? 0) < 3 && savedMembers.length === 8;
+          const members = (migrateDefaultMembers ? savedMembers.slice(0, 4) : (savedMembers.length ? savedMembers : createDefaultMembers(10))).map((member, index) => ({
+            id: member.id || `member-${index + 1}`,
+            name: member.name || `同仁 ${index + 1}`,
+            dailyBooks: Number(member.dailyBooks) || 0,
+            category: member.category === 'nonGeneral' ? 'nonGeneral' as WorkCategory : 'general' as WorkCategory,
+          }));
           setSettings({
             ...initialForecastSettings,
             ...parsed.settings,
             defaultsVersion: 3,
             people: migrateDefaultPeople ? 4 : (parsed.settings.people ?? 4),
-            members: migrateDefaultMembers ? savedMembers.slice(0, 4) : savedMembers,
+            members,
           });
           setRows(parsed.rows);
         } catch { /* keep defaults */ }
@@ -751,12 +750,18 @@ function LiveWorkspace() {
           const migrateDefaultPeople = parsed.settings.defaultsVersion === undefined && parsed.settings.people === 8;
           const savedMembers = parsed.settings.members ?? [];
           const migrateDefaultMembers = (parsed.settings.defaultsVersion ?? 0) < 3 && savedMembers.length === 8;
+          const members = (migrateDefaultMembers ? savedMembers.slice(0, 4) : (savedMembers.length ? savedMembers : createDefaultMembers(9))).map((member, index) => ({
+            id: member.id || `member-${index + 1}`,
+            name: member.name || `同仁 ${index + 1}`,
+            dailyBooks: Number(member.dailyBooks) || 0,
+            category: member.category === 'nonGeneral' ? 'nonGeneral' as WorkCategory : 'general' as WorkCategory,
+          }));
           const restoredSettings = {
             ...initialLiveSettings,
             ...parsed.settings,
             defaultsVersion: 3,
             people: migrateDefaultPeople ? 4 : (parsed.settings.people ?? 4),
-            members: migrateDefaultMembers ? savedMembers.slice(0, 4) : savedMembers,
+            members,
           };
           if (restoredSettings.importedCompanies.length) {
             restoredSettings.expectedRemaining = 0;
@@ -819,6 +824,12 @@ function LiveWorkspace() {
     const importedMode = settings.importedCompanies.length > 0;
     const received = importedMode ? issuedCompanies.length : validRows.reduce((sum, row) => sum + row.received, 0);
     const completed = importedMode ? issuedCompanies.filter((company) => Boolean(company.completionDate && company.completionDate <= today)).length : validRows.reduce((sum, row) => sum + row.completed, 0);
+    const generalReceived = importedMode ? issuedCompanies.filter(isGeneralIndustry).length : received;
+    const nonGeneralReceived = importedMode ? issuedCompanies.filter((company) => !isGeneralIndustry(company)).length : 0;
+    const generalCompleted = importedMode ? issuedCompanies.filter((company) => isGeneralIndustry(company) && Boolean(company.completionDate && company.completionDate <= today)).length : completed;
+    const nonGeneralCompleted = importedMode ? issuedCompanies.filter((company) => !isGeneralIndustry(company) && Boolean(company.completionDate && company.completionDate <= today)).length : 0;
+    const generalBacklog = Math.max(0, generalReceived - generalCompleted);
+    const nonGeneralBacklog = Math.max(0, nonGeneralReceived - nonGeneralCompleted);
     const backlog = Math.max(0, received - completed);
     const outstanding = importedMode ? backlog : backlog + settings.expectedRemaining;
     const latestDate = parseDate(validRows[validRows.length - 1].date);
@@ -831,6 +842,8 @@ function LiveWorkspace() {
     const feasible = outstanding <= remainingCapacity;
     const neededDaily = daysLeft > 0 ? outstanding / daysLeft : Infinity;
     const requiredPeople = daysLeft > 0 && team.perPersonCapacity > 0 ? Math.ceil(outstanding / (daysLeft * team.perPersonCapacity)) : null;
+    const generalRequiredPeople = daysLeft > 0 && team.generalPerPersonCapacity > 0 ? Math.ceil(generalBacklog / (daysLeft * team.generalPerPersonCapacity)) : (generalBacklog > 0 ? null : 0);
+    const nonGeneralRequiredPeople = daysLeft > 0 && team.nonGeneralPerPersonCapacity > 0 ? Math.ceil(nonGeneralBacklog / (daysLeft * team.nonGeneralPerPersonCapacity)) : (nonGeneralBacklog > 0 ? null : 0);
     const actualDays = new Set(validRows.filter((row) => row.completed > 0).map((row) => row.date)).size;
     const observedPerPerson = actualDays > 0 && team.teamCount > 0 ? completed / actualDays / team.teamCount : 0;
     let finishDate: Date | null = outstanding <= 0 ? latestDate : null;
@@ -846,7 +859,7 @@ function LiveWorkspace() {
       cumulativeCompleted += row.completed;
       return { ...row, backlog: Math.max(0, cumulativeReceived - cumulativeCompleted) };
     });
-    return { received, completed, backlog, outstanding, daysLeft, dailyCapacity, teamCount: team.teamCount, remainingCapacity, feasible, neededDaily, requiredPeople, observedPerPerson, finishDate, points };
+    return { received, completed, backlog, outstanding, daysLeft, dailyCapacity, teamCount: team.teamCount, remainingCapacity, feasible, neededDaily, requiredPeople, observedPerPerson, finishDate, points, generalReceived, nonGeneralReceived, generalCompleted, nonGeneralCompleted, generalBacklog, nonGeneralBacklog, generalRequiredPeople, nonGeneralRequiredPeople, generalCapacity: team.generalCapacity, nonGeneralCapacity: team.nonGeneralCapacity, generalCount: team.generalCount, nonGeneralCount: team.nonGeneralCount };
   }, [settings, validRows]);
 
   function updateRow(id: string, patch: Partial<LiveRow>) {
@@ -903,6 +916,7 @@ function LiveWorkspace() {
         id: key,
         code,
         name: name || code,
+        finInd: sheet.finIndIndex >= 0 ? String(row[sheet.finIndIndex] ?? '').trim() : '',
         announcementDate: sheet.announcementIndex >= 0 ? normalizeDateValue(row[sheet.announcementIndex], fallbackYear) : null,
         completionDate: null,
       };
@@ -1037,6 +1051,10 @@ function LiveWorkspace() {
               <Metric label="剩餘工作天" value={`${result.daysLeft} 天`} note={`可產出 ${compactNumber(result.remainingCapacity)} 件`} />
               <Metric label="每日需完成" value={Number.isFinite(result.neededDaily) ? `${compactNumber(result.neededDaily, 1)} 件` : '已無時間'} note={`目前產能 ${compactNumber(result.dailyCapacity, 1)} 件`} />
               <Metric label="最少人力" value={result.requiredPeople ? `${result.requiredPeople} 人` : '無法估算'} note={`目前 ${result.teamCount} 人`} />
+              <Metric label="一般產業待辦" value={`${compactNumber(result.generalBacklog)} 件`} note={`已完成 ${compactNumber(result.generalCompleted)}／${compactNumber(result.generalReceived)}，分配 ${result.generalCount} 人`} />
+              <Metric label="非一般產業待辦" value={`${compactNumber(result.nonGeneralBacklog)} 件`} note={`已完成 ${compactNumber(result.nonGeneralCompleted)}／${compactNumber(result.nonGeneralReceived)}，分配 ${result.nonGeneralCount} 人`} />
+              <Metric label="一般最少人力" value={result.generalRequiredPeople === null ? '無法估算' : `${result.generalRequiredPeople} 人`} note={`一般產能 ${compactNumber(result.generalCapacity, 1)} 件／日`} />
+              <Metric label="非一般最少人力" value={result.nonGeneralRequiredPeople === null ? '無法估算' : `${result.nonGeneralRequiredPeople} 人`} note={`非一般產能 ${compactNumber(result.nonGeneralCapacity, 1)} 件／日`} />
             </div>
 
             <div className="progress-card">
