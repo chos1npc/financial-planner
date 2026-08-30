@@ -302,6 +302,25 @@ function rowsFromCompanies(companies: ImportedCompany[], startDate: string, endD
   return createDailyRows(startDate, endDate).map((row) => ({ ...row, received: receivedByDate.get(row.date) ?? 0, completed: completedByDate.get(row.date) ?? 0 }));
 }
 
+function summarizeCompanies(companies: ImportedCompany[], startDate: string, today: string) {
+  const previousWorkday = toISO(addBusinessDays(parseDate(startDate), -1));
+  let announced = 0;
+  let due = 0;
+  let pending = 0;
+  let beforeSeason = 0;
+  companies.forEach((company) => {
+    if (!company.announcementDate) {
+      pending += 1;
+      return;
+    }
+    const workDate = reportWorkDate(company.announcementDate);
+    if (company.announcementDate >= previousWorkday && company.announcementDate <= today) announced += 1;
+    if (workDate < startDate) beforeSeason += 1;
+    else if (workDate >= startDate && workDate <= today) due += 1;
+  });
+  return { announced, due, pending, notDue: Math.max(0, announced - due), beforeSeason };
+}
+
 function mergeCompany(existing: ImportedCompany, incoming: ImportedCompany) {
   return {
     ...existing,
@@ -698,7 +717,7 @@ function LiveWorkspace() {
   const [importAnnyymm, setImportAnnyymm] = useState('');
   const [importQuarter, setImportQuarter] = useState('');
   const [importError, setImportError] = useState('');
-  const [importSummary, setImportSummary] = useState<{ total: number; announced: number; pending: number; beforeSeason: number; duplicates: number } | null>(null);
+  const [importSummary, setImportSummary] = useState<{ total: number; announced: number; due: number; pending: number; notDue: number; beforeSeason: number; duplicates: number } | null>(null);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -732,16 +751,8 @@ function LiveWorkspace() {
   const currentImportSummary = useMemo(() => {
     if (!settings.importedCompanies.length) return importSummary;
     const today = localTodayISO();
-    let announced = 0;
-    let pending = 0;
-    let beforeSeason = 0;
-    settings.importedCompanies.forEach((company) => {
-      const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
-      if (workDate && workDate < settings.seasonStartDate) beforeSeason += 1;
-      else if (workDate && workDate <= today) announced += 1;
-      else pending += 1;
-    });
-    return { total: settings.importedCompanies.length, announced, pending, beforeSeason, duplicates: importSummary?.duplicates ?? 0 };
+    const counts = summarizeCompanies(settings.importedCompanies, settings.seasonStartDate, today);
+    return { total: settings.importedCompanies.length, ...counts, duplicates: importSummary?.duplicates ?? 0 };
   }, [importSummary, settings.importedCompanies, settings.seasonStartDate]);
   const result = useMemo(() => {
     if (!validRows.length || !settings.completionDate) return null;
@@ -843,17 +854,9 @@ function LiveWorkspace() {
     }
     const today = localTodayISO();
     const start = settings.seasonStartDate;
-    let announced = 0;
-    let pending = 0;
-    let beforeSeason = 0;
-    companies.forEach((company) => {
-      const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
-      if (workDate && workDate < start) beforeSeason += 1;
-      else if (workDate && workDate <= today) announced += 1;
-      else pending += 1;
-    });
+    const counts = summarizeCompanies(companies, start, today);
     setSettings((current) => ({ ...current, importedCompanies: companies }));
-    setImportSummary({ total: companies.length, announced, pending, beforeSeason, duplicates: Math.max(0, rawCount - companies.length) });
+    setImportSummary({ total: companies.length, ...counts, duplicates: Math.max(0, rawCount - companies.length) });
     setImportError('');
   }
 
@@ -886,21 +889,10 @@ function LiveWorkspace() {
     const updatedCompanies = settings.importedCompanies.map((company) => ({ ...company, completionDate: completionByCompany.get(company.code || company.name) ?? company.completionDate }));
     const today = localTodayISO();
     const start = settings.seasonStartDate;
-    let announced = 0;
-    let pending = 0;
-    updatedCompanies.forEach((company) => {
-      const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
-      if (workDate && workDate >= start && workDate <= today) {
-        announced += 1;
-      } else if (!workDate || workDate > today) pending += 1;
-    });
+    const counts = summarizeCompanies(updatedCompanies, start, today);
     setRows(rowsFromCompanies(updatedCompanies, start, today));
-    setSettings((current) => ({ ...current, expectedRemaining: pending, importedCompanies: updatedCompanies }));
-    const beforeSeason = updatedCompanies.filter((company) => {
-      const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
-      return Boolean(workDate && workDate < start);
-    }).length;
-    setImportSummary({ total: updatedCompanies.length, announced, pending, beforeSeason, duplicates: 0 });
+    setSettings((current) => ({ ...current, expectedRemaining: counts.pending + counts.notDue, importedCompanies: updatedCompanies }));
+    setImportSummary({ total: updatedCompanies.length, ...counts, duplicates: 0 });
     setImportError(`已依 ${selectedSheets.map((sheet) => sheet.name).join('、')} 的完成日更新實績。`);
   }
 
@@ -931,7 +923,7 @@ function LiveWorkspace() {
           </div>}
           {manpowerWorkbookSheets.length > 0 && <button className="primary-button manpower-import-button" onClick={applyManpowerImport}>依人名匯入完成日期並更新實績</button>}
           {importError && <div className="import-error">{importError}</div>}
-          {currentImportSummary && <div className="import-summary"><span>唯一公司 <strong>{compactNumber(currentImportSummary.total)}</strong></span><span>忙季內應收到 <strong>{compactNumber(currentImportSummary.announced)}</strong></span><span>尚未公告／尚未到期 <strong>{compactNumber(currentImportSummary.pending)}</strong></span>{currentImportSummary.beforeSeason > 0 && <span>忙季前已公告 <strong>{compactNumber(currentImportSummary.beforeSeason)}</strong></span>}<span>去除重複 <strong>{compactNumber(currentImportSummary.duplicates)}</strong></span></div>}
+          {currentImportSummary && <div className="import-summary"><span>唯一公司 <strong>{compactNumber(currentImportSummary.total)}</strong></span><span>已公告 <strong>{compactNumber(currentImportSummary.announced)}</strong></span><span>今日前應處理 <strong>{compactNumber(currentImportSummary.due)}</strong></span><span>尚未公告 <strong>{compactNumber(currentImportSummary.pending)}</strong></span>{currentImportSummary.notDue > 0 && <span>已公告但尚未到工作日 <strong>{compactNumber(currentImportSummary.notDue)}</strong></span>}{currentImportSummary.beforeSeason > 0 && <span>忙季前已公告 <strong>{compactNumber(currentImportSummary.beforeSeason)}</strong></span>}<span>去除重複 <strong>{compactNumber(currentImportSummary.duplicates)}</strong></span></div>}
         </div>
         <div className="data-table-card">
           <div className="data-table live-table">
