@@ -9,7 +9,8 @@ type WorkCategory = 'general' | 'nonGeneral';
 type TeamMember = { id: string; name: string; dailyBooks: number; category: WorkCategory };
 type HistoricalRow = { id: string; date: string; quantity: number };
 type LiveRow = { id: string; date: string; received: number; completed: number };
-type ImportedCompany = { id: string; code: string; name: string; finInd: string; announcementDate: string | null; completionDate: string | null };
+type ImportedCompany = { id: string; code: string; name: string; finInd: string; announcementDate: string | null; completionDate: string | null; completionMember: string | null };
+type MemberDailyCount = { date: string; member: string; general: number; nonGeneral: number; total: number };
 type DailyComparison = { date: string; newCodes: string[]; availableCodes: string[]; completedCodes: string[]; matchedCodes: string[]; completedOnlyCodes: string[]; endingBacklogCodes: string[] };
 type WorkbookSheet = { name: string; headers: string[]; rows: string[][] };
 type ParsedWorkbookSheet = WorkbookSheet & {
@@ -358,6 +359,7 @@ function mergeCompany(existing: ImportedCompany, incoming: ImportedCompany) {
     finInd: existing.finInd || incoming.finInd,
     announcementDate: existing.announcementDate ?? incoming.announcementDate,
     completionDate: existing.completionDate ?? incoming.completionDate,
+    completionMember: existing.completionMember ?? incoming.completionMember,
   };
 }
 
@@ -762,6 +764,11 @@ function LiveWorkspace() {
             defaultsVersion: 3,
             people: migrateDefaultPeople ? 4 : (parsed.settings.people ?? 4),
             members,
+            importedCompanies: (parsed.settings.importedCompanies ?? []).map((company) => ({
+              ...company,
+              finInd: String(company.finInd ?? ''),
+              completionMember: company.completionMember ?? null,
+            })),
           };
           if (restoredSettings.importedCompanies.length) {
             restoredSettings.expectedRemaining = 0;
@@ -817,6 +824,19 @@ function LiveWorkspace() {
     });
     return result;
   }, [settings.importedCompanies, settings.seasonStartDate, tableRows]);
+  const memberDailyStats = useMemo<MemberDailyCount[]>(() => {
+    if (!settings.importedCompanies.length) return [];
+    const today = localTodayISO();
+    const scopedCompanies = issuedCompaniesForPeriod(settings.importedCompanies, settings.seasonStartDate, today);
+    const memberNames = settings.members.map((member) => member.name.trim()).filter(Boolean);
+    const normalizeMember = (value: string | null) => String(value ?? '').trim().toLocaleLowerCase();
+    return tableRows.flatMap((row) => memberNames.map((member) => {
+      const completed = scopedCompanies.filter((company) => company.completionDate === row.date && normalizeMember(company.completionMember) === normalizeMember(member));
+      const general = completed.filter(isGeneralIndustry).length;
+      const nonGeneral = completed.length - general;
+      return { date: row.date, member, general, nonGeneral, total: completed.length };
+    }));
+  }, [settings.importedCompanies, settings.members, settings.seasonStartDate, tableRows]);
   const result = useMemo(() => {
     if (!validRows.length || !settings.completionDate) return null;
     const today = localTodayISO();
@@ -919,6 +939,7 @@ function LiveWorkspace() {
         finInd: sheet.finIndIndex >= 0 ? String(row[sheet.finIndIndex] ?? '').trim() : '',
         announcementDate: sheet.announcementIndex >= 0 ? normalizeDateValue(row[sheet.announcementIndex], fallbackYear) : null,
         completionDate: null,
+        completionMember: null,
       };
       companyMap.set(key, companyMap.has(key) ? mergeCompany(companyMap.get(key)!, company) : company);
     }));
@@ -946,29 +967,34 @@ function LiveWorkspace() {
       setImportError('請先在 Step 1 選擇「逐人設定本數」並輸入人名，系統會用人名尋找對應工作表。');
       return;
     }
-    const selectedSheets = people.flatMap((person) => manpowerWorkbookSheets.filter((sheet) => normalizeName(sheet.name) === normalizeName(person.name)));
+    const selectedSheets = people.flatMap((person) => manpowerWorkbookSheets
+      .filter((sheet) => normalizeName(sheet.name) === normalizeName(person.name))
+      .map((sheet) => ({ sheet, memberName: person.name.trim() })));
     if (!selectedSheets.length) {
       setImportError(`找不到與輸入人名相同的工作表：${people.map((person) => person.name).join('、')}`);
       return;
     }
     const fallbackYear = parseYear(importAnnyymm);
-    const completionByCompany = new Map<string, string>();
-    selectedSheets.forEach((sheet) => sheet.rows.forEach((row) => {
+    const completionByCompany = new Map<string, { date: string; memberName: string }>();
+    selectedSheets.forEach(({ sheet, memberName }) => sheet.rows.forEach((row) => {
       if (String(row[sheet.periodIndex] ?? '').trim() !== importAnnyymm || String(row[sheet.quarterIndex] ?? '').trim() !== importQuarter || sheet.completionIndex < 0) return;
       const code = String(row[sheet.codeIndex] ?? '').trim();
       const name = String(row[sheet.nameIndex] ?? '').trim();
       const key = companyIdentity(code, name);
       const completion = normalizeDateValue(row[sheet.completionIndex], fallbackYear);
-      if (key && completion && !completionByCompany.has(key)) completionByCompany.set(key, completion);
+      if (key && completion && !completionByCompany.has(key)) completionByCompany.set(key, { date: completion, memberName });
     }));
-    const updatedCompanies = settings.importedCompanies.map((company) => ({ ...company, completionDate: completionByCompany.get(companyIdentity(company.code, company.name)) ?? null }));
+    const updatedCompanies = settings.importedCompanies.map((company) => {
+      const completion = completionByCompany.get(companyIdentity(company.code, company.name));
+      return { ...company, completionDate: completion?.date ?? null, completionMember: completion?.memberName ?? null };
+    });
     const today = localTodayISO();
     const start = settings.seasonStartDate;
     const counts = summarizeCompanies(updatedCompanies, start, today);
     setRows(rowsFromCompanies(updatedCompanies, start, today));
     setSettings((current) => ({ ...current, openingBacklog: 0, expectedRemaining: 0, importedCompanies: updatedCompanies }));
     setImportSummary({ total: updatedCompanies.length, ...counts, duplicates: 0 });
-    setImportError(`已依 ${selectedSheets.map((sheet) => sheet.name).join('、')} 的完成日更新實績。`);
+    setImportError(`已依 ${selectedSheets.map(({ sheet }) => sheet.name).join('、')} 的完成日更新實績。`);
   }
 
   const maxTrend = result ? Math.max(1, ...result.points.flatMap((point) => [point.received, point.completed, point.backlog])) : 1;
@@ -1020,6 +1046,14 @@ function LiveWorkspace() {
           </div>
           <button className="add-row" onClick={() => setRows((current) => [...current, { id: makeId(), date: '', received: 0, completed: 0 }])}>＋ 新增一天</button>
         </div>
+
+        {settings.importedCompanies.length > 0 && memberDailyStats.length > 0 && <div className="data-table-card member-daily-card">
+          <div className="member-daily-heading"><div><span>人員完成明細</span><h3>每日一般／非一般產業</h3></div><small>依完成日期與人力工作表歸屬統計，重複公司只計一次</small></div>
+          <div className="data-table member-daily-table">
+            <div className="table-row table-header"><span>日期</span><span>人員</span><span>一般產業</span><span>非一般</span><span>合計</span></div>
+            {memberDailyStats.map((item) => <div className="table-row" key={`${item.date}-${item.member}`}><span>{formatDate(item.date)}</span><strong>{item.member}</strong><span>{item.general}</span><span>{item.nonGeneral}</span><strong>{item.total}</strong></div>)}
+          </div>
+        </div>}
 
         {settings.importedCompanies.length > 0 && <details className="company-list-card"><summary>查看已匯入的 {compactNumber(settings.importedCompanies.length)} 家唯一公司</summary><div className="company-list">{settings.importedCompanies.map((company) => <div key={company.id}><span>{company.code || '—'}</span><strong>{company.name}</strong><small>{company.announcementDate ? `公告 ${company.announcementDate}` : '尚未公告'}{company.completionDate ? `・完成 ${company.completionDate}` : ''}</small></div>)}</div></details>}
 
