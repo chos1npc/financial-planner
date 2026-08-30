@@ -995,9 +995,9 @@ function LiveWorkspace() {
                   {row.date && <small className={!isWorkday(parseDate(row.date)) ? 'is-weekend' : ''}>{formatWeekday(row.date)}{!isWorkday(parseDate(row.date)) ? '・非工作日' : ''}</small>}
                   {dailyComparisonByDate.get(row.date) && <details className="code-detail"><summary>查看公司碼</summary><div><small>當日可做：{dailyComparisonByDate.get(row.date)!.newCodes.join('、') || '—'}</small><small>已做：{dailyComparisonByDate.get(row.date)!.completedCodes.join('、') || '—'}</small><small>未配對：{dailyComparisonByDate.get(row.date)!.completedOnlyCodes.join('、') || '—'}</small><small>剩餘：{dailyComparisonByDate.get(row.date)!.endingBacklogCodes.join('、') || '—'}</small></div></details>}
                 </div>
-                <input aria-label="當日可做本數" type="number" min="0" value={(dailyComparisonByDate.get(row.date)?.newCodes.length ?? row.incoming) || ''} placeholder="0" readOnly={settings.importedCompanies.length > 0} onChange={(event) => updateRow(row.id, { received: Number(event.target.value) })} />
+                <input aria-label="當日可做本數" type="number" min="0" value={(settings.importedCompanies.length ? row.available : row.incoming) || ''} placeholder="0" readOnly={settings.importedCompanies.length > 0} onChange={(event) => updateRow(row.id, { received: Number(event.target.value) })} />
                 <input aria-label="實際完成量" type="number" min="0" value={row.completed || ''} placeholder="0" onChange={(event) => updateRow(row.id, { completed: Number(event.target.value) })} />
-                <span className={`daily-remaining ${(dailyComparisonByDate.get(row.date)?.newCodes.length ?? row.incoming) - row.completed < 0 ? 'is-negative' : ''}`}>{(dailyComparisonByDate.get(row.date)?.newCodes.length ?? row.incoming) - row.completed}</span>
+                <span className={`daily-remaining ${(settings.importedCompanies.length ? row.available : row.incoming) - row.completed < 0 ? 'is-negative' : ''}`}>{(settings.importedCompanies.length ? row.available : row.incoming) - row.completed}</span>
                 <span className="remaining-count">{dailyComparisonByDate.get(row.date)?.endingBacklogCodes.length ?? row.endingBacklog}</span>
                 <button className="delete-row" aria-label="刪除這一列" onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}>×</button>
               </div>
