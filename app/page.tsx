@@ -49,7 +49,7 @@ const FORECAST_KEY = 'busy-season-forecast-v1';
 const LIVE_KEY = 'busy-season-live-v1';
 
 const initialForecastSettings: ForecastSettings = {
-  defaultsVersion: 2,
+  defaultsVersion: 3,
   historicalAnchor: '2025-11-14',
   currentAnchor: '2026-11-16',
   completionDate: '2026-11-18',
@@ -61,7 +61,7 @@ const initialForecastSettings: ForecastSettings = {
 };
 
 const initialLiveSettings: LiveSettings = {
-  defaultsVersion: 2,
+  defaultsVersion: 3,
   seasonStartDate: '2026-08-24',
   anchorDate: '2026-08-31',
   completionDate: '2026-09-04',
@@ -458,12 +458,14 @@ function ForecastWorkspace() {
         try {
           const parsed = JSON.parse(saved) as { settings: Partial<ForecastSettings>; rows: HistoricalRow[] };
           const migrateDefaultPeople = parsed.settings.defaultsVersion === undefined && parsed.settings.people === 12;
+          const savedMembers = parsed.settings.members ?? [];
+          const migrateDefaultMembers = (parsed.settings.defaultsVersion ?? 0) < 3 && savedMembers.length === 8;
           setSettings({
             ...initialForecastSettings,
             ...parsed.settings,
-            defaultsVersion: 2,
+            defaultsVersion: 3,
             people: migrateDefaultPeople ? 4 : (parsed.settings.people ?? 4),
-            members: parsed.settings.members ?? [],
+            members: migrateDefaultMembers ? savedMembers.slice(0, 4) : savedMembers,
           });
           setRows(parsed.rows);
         } catch { /* keep defaults */ }
@@ -692,12 +694,14 @@ function LiveWorkspace() {
         try {
           const parsed = JSON.parse(saved) as { settings: Partial<LiveSettings>; rows: LiveRow[] };
           const migrateDefaultPeople = parsed.settings.defaultsVersion === undefined && parsed.settings.people === 8;
+          const savedMembers = parsed.settings.members ?? [];
+          const migrateDefaultMembers = (parsed.settings.defaultsVersion ?? 0) < 3 && savedMembers.length === 8;
           setSettings({
             ...initialLiveSettings,
             ...parsed.settings,
-            defaultsVersion: 2,
+            defaultsVersion: 3,
             people: migrateDefaultPeople ? 4 : (parsed.settings.people ?? 4),
-            members: parsed.settings.members ?? [],
+            members: migrateDefaultMembers ? savedMembers.slice(0, 4) : savedMembers,
           });
           setRows(parsed.rows?.some((row) => row.date) ? parsed.rows : createDailyRows(parsed.settings.seasonStartDate ?? initialLiveSettings.seasonStartDate, localTodayISO()));
         } catch { /* keep defaults */ }
