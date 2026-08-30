@@ -191,6 +191,22 @@ function getTeamCapacity(settings: { members: TeamMember[] }) {
   };
 }
 
+function simulateCategoryWork(generalBacklog: number, nonGeneralBacklog: number, startDate: Date, deadline: Date, team: ReturnType<typeof getTeamCapacity>) {
+  let generalRemaining = Math.max(0, generalBacklog);
+  let nonGeneralRemaining = Math.max(0, nonGeneralBacklog);
+  let finishDate: Date | null = generalRemaining + nonGeneralRemaining <= 0 ? startDate : null;
+  for (let cursor = startDate; cursor <= deadline && !finishDate; cursor = addDays(cursor, 1)) {
+    if (!isWorkday(cursor)) continue;
+    const nonGeneralDone = Math.min(nonGeneralRemaining, team.nonGeneralCapacity);
+    nonGeneralRemaining -= nonGeneralDone;
+    const releasedNonGeneralCapacity = Math.max(0, team.nonGeneralCapacity - nonGeneralDone);
+    const generalDone = Math.min(generalRemaining, team.generalCapacity + releasedNonGeneralCapacity);
+    generalRemaining -= generalDone;
+    if (generalRemaining + nonGeneralRemaining <= 0) finishDate = cursor;
+  }
+  return { generalRemaining, nonGeneralRemaining, finishDate };
+}
+
 function countWorkdays(start: Date, end: Date) {
   if (start > end) return 0;
   let count = 0;
@@ -475,7 +491,7 @@ function TeamCapacityEditor({ settings, onChange }: { settings: TeamCapacitySett
       <div className="team-summary">
         <span>團隊人數 <strong>{team.teamCount} 人</strong></span>
         <span>團隊每日產能 <strong>{compactNumber(team.dailyCapacity, 1)} 本</strong></span>
-        <small>一般 {team.generalCount} 人／{compactNumber(team.generalCapacity, 1)} 本，非一般 {team.nonGeneralCount} 人／{compactNumber(team.nonGeneralCapacity, 1)} 本</small>
+        <small>一般 {team.generalCount} 人／{compactNumber(team.generalCapacity, 1)} 本，非一般 {team.nonGeneralCount} 人／{compactNumber(team.nonGeneralCapacity, 1)} 本；非一般完成後，空出的產能轉做一般</small>
       </div>
     </div>
   );
@@ -848,7 +864,7 @@ function LiveWorkspace() {
     const nonGeneralReceived = importedMode ? issuedCompanies.filter((company) => !isGeneralIndustry(company)).length : 0;
     const generalCompleted = importedMode ? issuedCompanies.filter((company) => isGeneralIndustry(company) && Boolean(company.completionDate && company.completionDate <= today)).length : completed;
     const nonGeneralCompleted = importedMode ? issuedCompanies.filter((company) => !isGeneralIndustry(company) && Boolean(company.completionDate && company.completionDate <= today)).length : 0;
-    const generalBacklog = Math.max(0, generalReceived - generalCompleted);
+    const generalBacklog = Math.max(0, generalReceived - generalCompleted) + (importedMode ? 0 : settings.expectedRemaining);
     const nonGeneralBacklog = Math.max(0, nonGeneralReceived - nonGeneralCompleted);
     const backlog = Math.max(0, received - completed);
     const outstanding = importedMode ? backlog : backlog + settings.expectedRemaining;
@@ -859,19 +875,16 @@ function LiveWorkspace() {
     const team = getTeamCapacity(settings);
     const dailyCapacity = team.dailyCapacity;
     const remainingCapacity = daysLeft * dailyCapacity;
-    const feasible = outstanding <= remainingCapacity;
+    const deadlineSimulation = simulateCategoryWork(generalBacklog, nonGeneralBacklog, nextDate, deadline, team);
+    const feasible = deadlineSimulation.generalRemaining + deadlineSimulation.nonGeneralRemaining <= 0;
     const neededDaily = daysLeft > 0 ? outstanding / daysLeft : Infinity;
     const requiredPeople = daysLeft > 0 && team.perPersonCapacity > 0 ? Math.ceil(outstanding / (daysLeft * team.perPersonCapacity)) : null;
     const generalRequiredPeople = daysLeft > 0 && team.generalPerPersonCapacity > 0 ? Math.ceil(generalBacklog / (daysLeft * team.generalPerPersonCapacity)) : (generalBacklog > 0 ? null : 0);
     const nonGeneralRequiredPeople = daysLeft > 0 && team.nonGeneralPerPersonCapacity > 0 ? Math.ceil(nonGeneralBacklog / (daysLeft * team.nonGeneralPerPersonCapacity)) : (nonGeneralBacklog > 0 ? null : 0);
     const actualDays = new Set(validRows.filter((row) => row.completed > 0).map((row) => row.date)).size;
     const observedPerPerson = actualDays > 0 && team.teamCount > 0 ? completed / actualDays / team.teamCount : 0;
-    let finishDate: Date | null = outstanding <= 0 ? latestDate : null;
-    let remaining = outstanding;
-    for (let cursor = nextDate; !finishDate && cursor <= addDays(nextDate, 365); cursor = addDays(cursor, 1)) {
-      if (isWorkday(cursor)) remaining -= dailyCapacity;
-      if (remaining <= 0) finishDate = cursor;
-    }
+    const finishSimulation = feasible ? deadlineSimulation : simulateCategoryWork(generalBacklog, nonGeneralBacklog, nextDate, addDays(nextDate, 365), team);
+    const finishDate: Date | null = generalBacklog + nonGeneralBacklog <= 0 ? latestDate : finishSimulation.finishDate;
     let cumulativeReceived = settings.openingBacklog;
     let cumulativeCompleted = 0;
     const points = validRows.map((row) => {
