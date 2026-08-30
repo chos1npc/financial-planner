@@ -716,6 +716,20 @@ function LiveWorkspace() {
   }, [hydrated, rows, settings]);
 
   const validRows = useMemo(() => rows.filter((row) => row.date).sort((a, b) => a.date.localeCompare(b.date)), [rows]);
+  const currentImportSummary = useMemo(() => {
+    if (!settings.importedCompanies.length) return importSummary;
+    const today = localTodayISO();
+    let announced = 0;
+    let pending = 0;
+    let beforeSeason = 0;
+    settings.importedCompanies.forEach((company) => {
+      const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
+      if (workDate && workDate < settings.seasonStartDate) beforeSeason += 1;
+      else if (workDate && workDate <= today) announced += 1;
+      else pending += 1;
+    });
+    return { total: settings.importedCompanies.length, announced, pending, beforeSeason, duplicates: importSummary?.duplicates ?? 0 };
+  }, [importSummary, settings.importedCompanies, settings.seasonStartDate]);
   const result = useMemo(() => {
     if (!validRows.length || !settings.completionDate) return null;
     const received = validRows.reduce((sum, row) => sum + row.received, 0);
@@ -908,7 +922,7 @@ function LiveWorkspace() {
           </div>}
           {manpowerWorkbookSheets.length > 0 && <button className="primary-button manpower-import-button" onClick={applyManpowerImport}>依人名匯入完成日期並更新實績</button>}
           {importError && <div className="import-error">{importError}</div>}
-          {importSummary && <div className="import-summary"><span>唯一公司 <strong>{compactNumber(importSummary.total)}</strong></span><span>忙季內應收到 <strong>{compactNumber(importSummary.announced)}</strong></span><span>尚未公告／尚未到期 <strong>{compactNumber(importSummary.pending)}</strong></span>{importSummary.beforeSeason > 0 && <span>忙季前已公告 <strong>{compactNumber(importSummary.beforeSeason)}</strong></span>}<span>去除重複 <strong>{compactNumber(importSummary.duplicates)}</strong></span></div>}
+          {currentImportSummary && <div className="import-summary"><span>唯一公司 <strong>{compactNumber(currentImportSummary.total)}</strong></span><span>忙季內應收到 <strong>{compactNumber(currentImportSummary.announced)}</strong></span><span>尚未公告／尚未到期 <strong>{compactNumber(currentImportSummary.pending)}</strong></span>{currentImportSummary.beforeSeason > 0 && <span>忙季前已公告 <strong>{compactNumber(currentImportSummary.beforeSeason)}</strong></span>}<span>去除重複 <strong>{compactNumber(currentImportSummary.duplicates)}</strong></span></div>}
         </div>
         <div className="data-table-card">
           <div className="data-table live-table">
