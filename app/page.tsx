@@ -50,6 +50,7 @@ type LiveSettings = {
 const DAY = 86_400_000;
 const FORECAST_KEY = 'busy-season-forecast-v1';
 const LIVE_KEY = 'busy-season-live-v1';
+const FORECAST_MAX_OFFSET = 5;
 
 function createDefaultMembers(generalBooks: number, nonGeneralBooks = 0): TeamMember[] {
   return Array.from({ length: 4 }, (_, index) => ({ id: `default-member-${index + 1}`, name: `同仁 ${index + 1}`, generalBooks, nonGeneralBooks }));
@@ -557,9 +558,13 @@ function ForecastWorkspace() {
     if (hydrated) localStorage.setItem(FORECAST_KEY, JSON.stringify({ settings, rows }));
   }, [hydrated, rows, settings]);
 
+  const visibleRows = useMemo(
+    () => rows.filter((row) => !row.date || !settings.historicalAnchor || businessDayDiff(parseDate(row.date), parseDate(settings.historicalAnchor)) <= FORECAST_MAX_OFFSET),
+    [rows, settings.historicalAnchor],
+  );
   const validRows = useMemo(
-    () => rows.filter((row) => row.date && row.quantity > 0).sort((a, b) => a.date.localeCompare(b.date)),
-    [rows],
+    () => visibleRows.filter((row) => row.date && row.quantity > 0).sort((a, b) => a.date.localeCompare(b.date)),
+    [visibleRows],
   );
 
   const result = useMemo(() => {
@@ -706,7 +711,7 @@ function ForecastWorkspace() {
         <div className="data-table-card">
           <div className="data-table historical-table">
             <div className="table-row table-header"><span>歷史日期</span><span>T 日</span><span>財報數量</span><span></span></div>
-            {rows.map((row) => {
+            {visibleRows.map((row) => {
               const offset = row.date && settings.historicalAnchor ? businessDayDiff(parseDate(row.date), parseDate(settings.historicalAnchor)) : null;
               return (
                 <div className="table-row" key={row.id}>
