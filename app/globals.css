@@ -403,6 +403,7 @@ button { color: inherit; }
 .member-daily-heading small { color: var(--muted); font-size: 11px; }
 .member-daily-table { max-height: 420px; overflow: auto; }
 .member-daily-table .table-row { min-width: 560px; grid-template-columns: minmax(145px, 1fr) minmax(130px, 1fr) 100px 100px 70px; }
+.selected-file-name { color: var(--muted); font-size: 11px; }
 .table-row { min-width: 600px; display: grid; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #e5e7e1; }
 .historical-table .table-row { grid-template-columns: minmax(170px, 1.4fr) 74px minmax(120px, 1fr) 28px; }
 .live-table .table-row { grid-template-columns: minmax(170px, 1.25fr) minmax(110px, 1fr) minmax(105px, 1fr) 90px 90px 28px; }

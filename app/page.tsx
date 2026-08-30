@@ -518,6 +518,7 @@ function ForecastWorkspace() {
   ]);
   const [hydrated, setHydrated] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [forecastWorkbookName, setForecastWorkbookName] = useState('');
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -629,19 +630,45 @@ function ForecastWorkspace() {
     setRows((current) => current.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   }
 
-  function importRows(event: ChangeEvent<HTMLInputElement>) {
+  async function importRows(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const lines = parseCSV(String(reader.result));
-      const data = lines[0]?.some((cell) => /date|日期/i.test(cell)) ? lines.slice(1) : lines;
-      const imported = data
-        .filter((line) => /^\d{4}-\d{2}-\d{2}$/.test(line[0]) && Number(line[1]) >= 0)
-        .map((line) => ({ id: makeId(), date: line[0], quantity: Number(line[1]) }));
+    try {
+      let imported: HistoricalRow[] = [];
+      if (/\.(xlsx|xlsm)$/i.test(file.name)) {
+        const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', raw: false, cellDates: false, bookVBA: true });
+        const sheetName = workbook.SheetNames.includes('2025Q2本數') ? '2025Q2本數' : workbook.SheetNames.find((name) => name.includes('本數'));
+        if (!sheetName) throw new Error('找不到「2025Q2本數」工作表。');
+        const raw = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], { header: 1, raw: false, defval: '' }) as unknown[][];
+        const headers = (raw[0] ?? []).map((value) => String(value ?? '').trim());
+        const dateIndex = findColumn(headers, ['ann_date', '公告日', '公告日期']);
+        const codeIndex = findColumn(headers, ['comp_id', '公司碼', '公司代碼', '公司代號']);
+        if (dateIndex < 0) throw new Error('「2025Q2本數」找不到 ann_date／公告日欄位。');
+        const counts = new Map<string, number>();
+        const seen = new Set<string>();
+        raw.slice(1).forEach((row, index) => {
+          const date = normalizeDateValue(row[dateIndex], 2025);
+          if (!date) return;
+          const code = codeIndex >= 0 ? String(row[codeIndex] ?? '').trim() : '';
+          const key = code ? companyIdentity(code, '') : `${date}-${index}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          counts.set(date, (counts.get(date) ?? 0) + 1);
+        });
+        imported = [...counts.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, quantity]) => ({ id: makeId(), date, quantity }));
+        setForecastWorkbookName(`${file.name}（${sheetName}）`);
+      } else {
+        const text = await file.text();
+        const lines = parseCSV(text);
+        const data = lines[0]?.some((cell) => /date|日期/i.test(cell)) ? lines.slice(1) : lines;
+        imported = data
+          .filter((line) => /^\d{4}-\d{2}-\d{2}$/.test(line[0]) && Number(line[1]) >= 0)
+          .map((line) => ({ id: makeId(), date: line[0], quantity: Number(line[1]) }));
+      }
       if (imported.length) setRows(imported);
-    };
-    reader.readAsText(file);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '無法讀取這個檔案。');
+    }
     event.target.value = '';
   }
 
@@ -671,8 +698,9 @@ function ForecastWorkspace() {
           <div><span>STEP 3</span><h2>輸入歷史每日財報量</h2></div>
           <div className="inline-actions">
             <button className="text-button" onClick={() => setRows(forecastExample)}>載入範例</button>
-            <button className="text-button" onClick={() => fileRef.current?.click()}>匯入 CSV</button>
-            <input ref={fileRef} className="sr-only" type="file" accept=".csv,text/csv" onChange={importRows} />
+            <button className="text-button" onClick={() => fileRef.current?.click()}>匯入 XLSX（2025Q2本數）</button>
+            <input ref={fileRef} className="sr-only" type="file" accept=".xlsx,.xlsm,.csv,text/csv" onChange={importRows} />
+            {forecastWorkbookName && <strong className="selected-file-name">{forecastWorkbookName}</strong>}
           </div>
         </div>
         <div className="data-table-card">
