@@ -723,21 +723,22 @@ function LiveWorkspace() {
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
-      const saved = localStorage.getItem(LIVE_KEY);
+          const saved = localStorage.getItem(LIVE_KEY);
       if (saved) {
         try {
           const parsed = JSON.parse(saved) as { settings: Partial<LiveSettings>; rows: LiveRow[] };
           const migrateDefaultPeople = parsed.settings.defaultsVersion === undefined && parsed.settings.people === 8;
           const savedMembers = parsed.settings.members ?? [];
           const migrateDefaultMembers = (parsed.settings.defaultsVersion ?? 0) < 3 && savedMembers.length === 8;
-          setSettings({
+          const restoredSettings = {
             ...initialLiveSettings,
             ...parsed.settings,
             defaultsVersion: 3,
             people: migrateDefaultPeople ? 4 : (parsed.settings.people ?? 4),
             members: migrateDefaultMembers ? savedMembers.slice(0, 4) : savedMembers,
-          });
-          setRows(parsed.rows?.some((row) => row.date) ? parsed.rows : createDailyRows(parsed.settings.seasonStartDate ?? initialLiveSettings.seasonStartDate, localTodayISO()));
+          };
+          setSettings(restoredSettings);
+          setRows(restoredSettings.importedCompanies.length ? rowsFromCompanies(restoredSettings.importedCompanies, restoredSettings.seasonStartDate, localTodayISO()) : (parsed.rows?.some((row) => row.date) ? parsed.rows : createDailyRows(restoredSettings.seasonStartDate, localTodayISO())));
         } catch { /* keep defaults */ }
       }
       setHydrated(true);
