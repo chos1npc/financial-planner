@@ -409,6 +409,7 @@ function NumberField({
   step = 1,
   suffix,
   hint,
+  readOnly,
 }: {
   label: string;
   value: number;
@@ -417,6 +418,7 @@ function NumberField({
   step?: number;
   suffix?: string;
   hint?: string;
+  readOnly?: boolean;
 }) {
   return (
     <label className="field">
@@ -427,6 +429,7 @@ function NumberField({
           min={min}
           step={step}
           value={value}
+          readOnly={readOnly}
           onChange={(event) => onChange(Number(event.target.value))}
         />
         {suffix && <b>{suffix}</b>}
@@ -815,6 +818,14 @@ function LiveWorkspace() {
     const counts = summarizeCompanies(settings.importedCompanies, settings.seasonStartDate, today);
     return { total: settings.importedCompanies.length, ...counts, duplicates: importSummary?.duplicates ?? 0 };
   }, [importSummary, settings.importedCompanies, settings.seasonStartDate]);
+  const unannouncedCounts = useMemo(() => {
+    if (!settings.importedCompanies.length) return { general: settings.expectedRemaining, nonGeneral: 0 };
+    const unannounced = settings.importedCompanies.filter((company) => !company.announcementDate);
+    return {
+      general: unannounced.filter(isGeneralIndustry).length,
+      nonGeneral: unannounced.filter((company) => !isGeneralIndustry(company)).length,
+    };
+  }, [settings.expectedRemaining, settings.importedCompanies]);
   const tableRows = useMemo(() => {
     const calculated = rows.slice().sort((a, b) => a.date.localeCompare(b.date)).reduce<{ backlog: number; rows: Array<LiveRow & { incoming: number; available: number; difference: number; endingBacklog: number }> }>((accumulator, row) => {
       const incoming = settings.importedCompanies.length ? availableReportsForDate(row.date, settings.importedCompanies) : row.received;
@@ -869,10 +880,11 @@ function LiveWorkspace() {
     const nonGeneralReceived = importedMode ? issuedCompanies.filter((company) => !isGeneralIndustry(company)).length : 0;
     const generalCompleted = importedMode ? issuedCompanies.filter((company) => isGeneralIndustry(company) && Boolean(company.completionDate && company.completionDate <= today)).length : completed;
     const nonGeneralCompleted = importedMode ? issuedCompanies.filter((company) => !isGeneralIndustry(company) && Boolean(company.completionDate && company.completionDate <= today)).length : 0;
-    const generalBacklog = Math.max(0, generalReceived - generalCompleted) + (importedMode ? 0 : settings.expectedRemaining);
-    const nonGeneralBacklog = Math.max(0, nonGeneralReceived - nonGeneralCompleted);
+    const expectedRemaining = Math.max(0, settings.expectedRemaining);
+    const generalBacklog = Math.max(0, generalReceived - generalCompleted) + unannouncedCounts.general;
+    const nonGeneralBacklog = Math.max(0, nonGeneralReceived - nonGeneralCompleted) + unannouncedCounts.nonGeneral;
     const backlog = Math.max(0, received - completed);
-    const outstanding = importedMode ? backlog : backlog + settings.expectedRemaining;
+    const outstanding = importedMode ? generalBacklog + nonGeneralBacklog : backlog + expectedRemaining;
     const latestDate = parseDate(validRows[validRows.length - 1].date);
     const nextDate = addDays(latestDate, 1);
     const deadline = parseDate(settings.completionDate);
@@ -898,7 +910,7 @@ function LiveWorkspace() {
       return { ...row, backlog: Math.max(0, cumulativeReceived - cumulativeCompleted) };
     });
     return { received, completed, backlog, outstanding, daysLeft, dailyCapacity, teamCount: team.teamCount, remainingCapacity, feasible, neededDaily, requiredPeople, observedPerPerson, finishDate, points, generalReceived, nonGeneralReceived, generalCompleted, nonGeneralCompleted, generalBacklog, nonGeneralBacklog, generalRequiredPeople, nonGeneralRequiredPeople, generalCapacity: team.generalCapacity, nonGeneralCapacity: team.nonGeneralCapacity, generalCount: team.generalCount, nonGeneralCount: team.nonGeneralCount };
-  }, [settings, validRows]);
+  }, [settings, validRows, unannouncedCounts]);
 
   function updateRow(id: string, patch: Partial<LiveRow>) {
     setRows((current) => current.map((row) => (row.id === id ? { ...row, ...patch } : row)));
@@ -1076,9 +1088,12 @@ function LiveWorkspace() {
         {settings.importedCompanies.length > 0 && <details className="company-list-card"><summary>查看已匯入的 {compactNumber(settings.importedCompanies.length)} 家唯一公司</summary><div className="company-list">{settings.importedCompanies.map((company) => <div key={company.id}><span>{company.code || '—'}</span><strong>{company.name}</strong><small>{company.announcementDate ? `公告 ${company.announcementDate}` : '尚未公告'}{company.completionDate ? `・完成 ${company.completionDate}` : ''}</small></div>)}</div></details>}
 
         <div className="section-heading"><div><span>STEP 4</span><h2>設定剩餘工作</h2></div></div>
-        <div className="form-card two-fields">
+        <div className={`form-card ${settings.importedCompanies.length ? 'three-fields' : 'two-fields'}`}>
           <NumberField label="期初未完成" value={settings.openingBacklog} onChange={(value) => setSettings({ ...settings, openingBacklog: value })} suffix="件" hint="第一筆實績前就存在的待辦" />
-          <NumberField label="預計後續還會收到（未匯入時）" value={settings.expectedRemaining} onChange={(value) => setSettings({ ...settings, expectedRemaining: value })} suffix="件" hint="匯入公司清單後，統計只計算忙季前一工作日至今天的已公告公司" />
+          {settings.importedCompanies.length ? <>
+            <NumberField label="尚未公告（一般產業）" value={unannouncedCounts.general} onChange={() => undefined} suffix="件" hint="從公司清單自動帶入，會納入完工估計" readOnly />
+            <NumberField label="尚未公告（非一般產業）" value={unannouncedCounts.nonGeneral} onChange={() => undefined} suffix="件" hint="從公司清單自動帶入，會納入完工估計" readOnly />
+          </> : <NumberField label="預計後續還會收到（未匯入時）" value={settings.expectedRemaining} onChange={(value) => setSettings({ ...settings, expectedRemaining: value })} suffix="件" hint="尚未匯入公司清單時的預估數量" />}
         </div>
 
       </section>
