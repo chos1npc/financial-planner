@@ -328,6 +328,14 @@ function availableReportsForDate(date: string, companies: ImportedCompany[]) {
   return companies.filter((company) => company.announcementDate && company.announcementDate >= previousWorkday && company.announcementDate < date).length;
 }
 
+function openingBacklogFromCompanies(companies: ImportedCompany[], startDate: string) {
+  return companies.filter((company) => {
+    if (!company.completionDate || company.completionDate < startDate) return false;
+    const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
+    return !workDate || workDate < startDate;
+  }).length;
+}
+
 function mergeCompany(existing: ImportedCompany, incoming: ImportedCompany) {
   return {
     ...existing,
@@ -742,7 +750,10 @@ function LiveWorkspace() {
             people: migrateDefaultPeople ? 4 : (parsed.settings.people ?? 4),
             members: migrateDefaultMembers ? savedMembers.slice(0, 4) : savedMembers,
           };
-          if (restoredSettings.importedCompanies.length) restoredSettings.expectedRemaining = summarizeCompanies(restoredSettings.importedCompanies, restoredSettings.seasonStartDate, localTodayISO()).pending;
+          if (restoredSettings.importedCompanies.length) {
+            restoredSettings.expectedRemaining = summarizeCompanies(restoredSettings.importedCompanies, restoredSettings.seasonStartDate, localTodayISO()).pending;
+            if (!restoredSettings.openingBacklog) restoredSettings.openingBacklog = openingBacklogFromCompanies(restoredSettings.importedCompanies, restoredSettings.seasonStartDate);
+          }
           setSettings(restoredSettings);
           setRows(restoredSettings.importedCompanies.length ? rowsFromCompanies(restoredSettings.importedCompanies, restoredSettings.seasonStartDate, localTodayISO()) : (parsed.rows?.some((row) => row.date) ? parsed.rows : createDailyRows(restoredSettings.seasonStartDate, localTodayISO())));
         } catch { /* keep defaults */ }
@@ -763,6 +774,16 @@ function LiveWorkspace() {
     const counts = summarizeCompanies(settings.importedCompanies, settings.seasonStartDate, today);
     return { total: settings.importedCompanies.length, ...counts, duplicates: importSummary?.duplicates ?? 0 };
   }, [importSummary, settings.importedCompanies, settings.seasonStartDate]);
+  const tableRows = useMemo(() => {
+    const calculated = rows.slice().sort((a, b) => a.date.localeCompare(b.date)).reduce<{ backlog: number; rows: Array<LiveRow & { incoming: number; available: number; difference: number; endingBacklog: number }> }>((accumulator, row) => {
+      const incoming = settings.importedCompanies.length ? availableReportsForDate(row.date, settings.importedCompanies) : row.received;
+      const available = accumulator.backlog + incoming;
+      const difference = row.completed - available;
+      const endingBacklog = Math.max(0, available - row.completed);
+      return { backlog: endingBacklog, rows: [...accumulator.rows, { ...row, incoming, available, difference, endingBacklog }] };
+    }, { backlog: settings.openingBacklog, rows: [] });
+    return calculated.rows;
+  }, [rows, settings.importedCompanies, settings.openingBacklog]);
   const result = useMemo(() => {
     if (!validRows.length || !settings.completionDate) return null;
     const received = validRows.reduce((sum, row) => sum + row.received, 0);
@@ -807,7 +828,7 @@ function LiveWorkspace() {
   }
 
   function updateSeasonStart(value: string) {
-    setSettings((current) => ({ ...current, seasonStartDate: value }));
+    setSettings((current) => ({ ...current, seasonStartDate: value, openingBacklog: current.importedCompanies.length ? openingBacklogFromCompanies(current.importedCompanies, value) : current.openingBacklog }));
     setRows((current) => settings.importedCompanies.length ? rowsFromCompanies(settings.importedCompanies, value, localTodayISO()) : syncDailyRows(current, value, localTodayISO()));
   }
 
@@ -905,7 +926,7 @@ function LiveWorkspace() {
     const start = settings.seasonStartDate;
     const counts = summarizeCompanies(updatedCompanies, start, today);
     setRows(rowsFromCompanies(updatedCompanies, start, today));
-    setSettings((current) => ({ ...current, expectedRemaining: counts.pending, importedCompanies: updatedCompanies }));
+    setSettings((current) => ({ ...current, openingBacklog: openingBacklogFromCompanies(updatedCompanies, start), expectedRemaining: counts.pending, importedCompanies: updatedCompanies }));
     setImportSummary({ total: updatedCompanies.length, ...counts, duplicates: 0 });
     setImportError(`已依 ${selectedSheets.map((sheet) => sheet.name).join('、')} 的完成日更新實績。`);
   }
@@ -942,22 +963,16 @@ function LiveWorkspace() {
         <div className="data-table-card">
           <div className="data-table live-table">
             <div className="table-row table-header"><span>日期</span><span>當日可做本數</span><span>實際完成</span><span>完成差額</span><span></span></div>
-            {rows.map((row) => (
+            {tableRows.map((row) => (
               <div className="table-row" key={row.id}>
-                {(() => {
-                  const available = settings.importedCompanies.length ? availableReportsForDate(row.date, settings.importedCompanies) : row.received;
-                  const difference = row.completed - available;
-                  return <>
                 <div className="table-date-cell">
                   <input aria-label="實績日期" type="date" value={row.date} onChange={(event) => updateRow(row.id, { date: event.target.value })} />
                   {row.date && <small className={!isWorkday(parseDate(row.date)) ? 'is-weekend' : ''}>{formatWeekday(row.date)}{!isWorkday(parseDate(row.date)) ? '・非工作日' : ''}</small>}
                 </div>
-                <input aria-label="當日可做本數" type="number" min="0" value={available || ''} placeholder="0" readOnly={settings.importedCompanies.length > 0} onChange={(event) => updateRow(row.id, { received: Number(event.target.value) })} />
+                <input aria-label="當日可做本數" type="number" min="0" value={row.available || ''} placeholder="0" readOnly={settings.importedCompanies.length > 0} onChange={(event) => updateRow(row.id, { received: Number(event.target.value) })} />
                 <input aria-label="實際完成量" type="number" min="0" value={row.completed || ''} placeholder="0" onChange={(event) => updateRow(row.id, { completed: Number(event.target.value) })} />
-                <span className={`completion-difference ${difference > 0 ? 'is-over' : ''}`}>{difference > 0 ? `+${difference}` : difference}</span>
+                <span className={`completion-difference ${row.difference > 0 ? 'is-over' : ''}`}>{row.difference > 0 ? `+${row.difference}` : row.difference}</span>
                 <button className="delete-row" aria-label="刪除這一列" onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}>×</button>
-                  </>;
-                })()}
               </div>
             ))}
           </div>
