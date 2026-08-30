@@ -9,7 +9,7 @@ type TeamMember = { id: string; name: string; dailyBooks: number };
 type HistoricalRow = { id: string; date: string; quantity: number };
 type LiveRow = { id: string; date: string; received: number; completed: number };
 type ImportedCompany = { id: string; code: string; name: string; announcementDate: string | null; completionDate: string | null };
-type DailyComparison = { date: string; availableCodes: string[]; completedCodes: string[]; matchedCodes: string[]; completedOnlyCodes: string[]; endingBacklogCodes: string[] };
+type DailyComparison = { date: string; newCodes: string[]; availableCodes: string[]; completedCodes: string[]; matchedCodes: string[]; completedOnlyCodes: string[]; endingBacklogCodes: string[] };
 type WorkbookSheet = { name: string; headers: string[]; rows: string[][] };
 type ParsedWorkbookSheet = WorkbookSheet & {
   codeIndex: number;
@@ -802,10 +802,14 @@ function LiveWorkspace() {
       if (company.completionDate && company.completionDate >= start && (!workDate || workDate < start)) pending.set(companyIdentity(company.code, company.name), company.code || company.name);
     });
     tableRows.forEach((row) => {
+      const newCodes: string[] = [];
       settings.importedCompanies.forEach((company) => {
         if (!company.announcementDate || company.announcementDate < previousWorkday || company.announcementDate >= row.date) return;
         const key = companyIdentity(company.code, company.name);
-        if (!pending.has(key)) pending.set(key, company.code || company.name);
+        if (!pending.has(key)) {
+          pending.set(key, company.code || company.name);
+          newCodes.push(company.code || company.name);
+        }
       });
       const completedCompanies = settings.importedCompanies.filter((company) => company.completionDate === row.date);
       const availableCodes = [...pending.values()];
@@ -813,7 +817,7 @@ function LiveWorkspace() {
       const matchedCodes = completedCompanies.filter((company) => pending.has(companyIdentity(company.code, company.name))).map((company) => company.code || company.name);
       const completedOnlyCodes = completedCompanies.filter((company) => !pending.has(companyIdentity(company.code, company.name))).map((company) => company.code || company.name);
       completedCompanies.forEach((company) => pending.delete(companyIdentity(company.code, company.name)));
-      result.set(row.date, { date: row.date, availableCodes, completedCodes, matchedCodes, completedOnlyCodes, endingBacklogCodes: [...pending.values()] });
+      result.set(row.date, { date: row.date, newCodes, availableCodes, completedCodes, matchedCodes, completedOnlyCodes, endingBacklogCodes: [...pending.values()] });
     });
     return result;
   }, [settings.importedCompanies, settings.seasonStartDate, tableRows]);
@@ -995,17 +999,17 @@ function LiveWorkspace() {
         </div>
         <div className="data-table-card">
           <div className="data-table live-table">
-            <div className="table-row table-header"><span>日期</span><span>當日可做本數</span><span>實際完成</span><span>完成差額</span><span></span></div>
+            <div className="table-row table-header"><span>日期</span><span>當日可做</span><span>實際完成</span><span>當日剩餘</span><span></span></div>
             {tableRows.map((row) => (
               <div className="table-row" key={row.id}>
                 <div className="table-date-cell">
                   <input aria-label="實績日期" type="date" value={row.date} onChange={(event) => updateRow(row.id, { date: event.target.value })} />
                   {row.date && <small className={!isWorkday(parseDate(row.date)) ? 'is-weekend' : ''}>{formatWeekday(row.date)}{!isWorkday(parseDate(row.date)) ? '・非工作日' : ''}</small>}
-                  {dailyComparisonByDate.get(row.date) && <details className="code-detail"><summary>查看公司碼</summary><div><small>可做：{dailyComparisonByDate.get(row.date)!.availableCodes.join('、') || '—'}</small><small>已做：{dailyComparisonByDate.get(row.date)!.completedCodes.join('、') || '—'}</small><small>未配對：{dailyComparisonByDate.get(row.date)!.completedOnlyCodes.join('、') || '—'}</small></div></details>}
+                  {dailyComparisonByDate.get(row.date) && <details className="code-detail"><summary>查看公司碼</summary><div><small>當日可做：{dailyComparisonByDate.get(row.date)!.newCodes.join('、') || '—'}</small><small>已做：{dailyComparisonByDate.get(row.date)!.completedCodes.join('、') || '—'}</small><small>未配對：{dailyComparisonByDate.get(row.date)!.completedOnlyCodes.join('、') || '—'}</small><small>剩餘：{dailyComparisonByDate.get(row.date)!.endingBacklogCodes.join('、') || '—'}</small></div></details>}
                 </div>
-                <input aria-label="當日可做本數" type="number" min="0" value={(dailyComparisonByDate.get(row.date)?.availableCodes.length ?? row.available) || ''} placeholder="0" readOnly={settings.importedCompanies.length > 0} onChange={(event) => updateRow(row.id, { received: Number(event.target.value) })} />
+                <input aria-label="當日可做本數" type="number" min="0" value={(dailyComparisonByDate.get(row.date)?.newCodes.length ?? row.incoming) || ''} placeholder="0" readOnly={settings.importedCompanies.length > 0} onChange={(event) => updateRow(row.id, { received: Number(event.target.value) })} />
                 <input aria-label="實際完成量" type="number" min="0" value={row.completed || ''} placeholder="0" onChange={(event) => updateRow(row.id, { completed: Number(event.target.value) })} />
-                <span className={`completion-difference ${row.completed - (dailyComparisonByDate.get(row.date)?.availableCodes.length ?? row.available) > 0 ? 'is-over' : ''}`}>{row.completed - (dailyComparisonByDate.get(row.date)?.availableCodes.length ?? row.available) > 0 ? `+${row.completed - (dailyComparisonByDate.get(row.date)?.availableCodes.length ?? row.available)}` : row.completed - (dailyComparisonByDate.get(row.date)?.availableCodes.length ?? row.available)}</span>
+                <span className="remaining-count">{dailyComparisonByDate.get(row.date)?.endingBacklogCodes.length ?? row.endingBacklog}</span>
                 <button className="delete-row" aria-label="刪除這一列" onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}>×</button>
               </div>
             ))}
