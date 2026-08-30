@@ -5,8 +5,7 @@ import * as XLSX from 'xlsx';
 
 type Mode = 'forecast' | 'live' | null;
 type TeamMode = 'uniform' | 'individual';
-type WorkCategory = 'general' | 'nonGeneral';
-type TeamMember = { id: string; name: string; dailyBooks: number; category: WorkCategory };
+type TeamMember = { id: string; name: string; generalBooks: number; nonGeneralBooks: number };
 type HistoricalRow = { id: string; date: string; quantity: number };
 type LiveRow = { id: string; date: string; received: number; completed: number };
 type ImportedCompany = { id: string; code: string; name: string; finInd: string; announcementDate: string | null; completionDate: string | null; completionMember: string | null };
@@ -52,8 +51,8 @@ const DAY = 86_400_000;
 const FORECAST_KEY = 'busy-season-forecast-v1';
 const LIVE_KEY = 'busy-season-live-v1';
 
-function createDefaultMembers(dailyBooks: number): TeamMember[] {
-  return Array.from({ length: 4 }, (_, index) => ({ id: `default-member-${index + 1}`, name: `同仁 ${index + 1}`, dailyBooks, category: 'general' as WorkCategory }));
+function createDefaultMembers(generalBooks: number, nonGeneralBooks = 0): TeamMember[] {
+  return Array.from({ length: 4 }, (_, index) => ({ id: `default-member-${index + 1}`, name: `同仁 ${index + 1}`, generalBooks, nonGeneralBooks }));
 }
 
 const initialForecastSettings: ForecastSettings = {
@@ -172,22 +171,24 @@ function compactNumber(value: number, digits = 0) {
 }
 
 function getTeamCapacity(settings: { members: TeamMember[] }) {
-  const generalMembers = settings.members.filter((member) => member.category !== 'nonGeneral');
-  const nonGeneralMembers = settings.members.filter((member) => member.category === 'nonGeneral');
-  const generalCapacity = generalMembers.reduce((sum, member) => sum + Math.max(0, member.dailyBooks), 0);
-  const nonGeneralCapacity = nonGeneralMembers.reduce((sum, member) => sum + Math.max(0, member.dailyBooks), 0);
+  const generalCapacity = settings.members.reduce((sum, member) => sum + Math.max(0, member.generalBooks), 0);
+  const nonGeneralCapacity = settings.members.reduce((sum, member) => sum + Math.max(0, member.nonGeneralBooks), 0);
+  const generalOnlyCapacity = settings.members.filter((member) => member.nonGeneralBooks <= 0).reduce((sum, member) => sum + Math.max(0, member.generalBooks), 0);
+  const switchingGeneralCapacity = Math.max(0, generalCapacity - generalOnlyCapacity);
   const dailyCapacity = generalCapacity + nonGeneralCapacity;
   const teamCount = settings.members.length;
   return {
     teamCount,
     dailyCapacity,
     perPersonCapacity: teamCount > 0 ? dailyCapacity / teamCount : 0,
-    generalCount: generalMembers.length,
-    nonGeneralCount: nonGeneralMembers.length,
+    generalCount: settings.members.filter((member) => member.generalBooks > 0).length,
+    nonGeneralCount: settings.members.filter((member) => member.nonGeneralBooks > 0).length,
     generalCapacity,
     nonGeneralCapacity,
-    generalPerPersonCapacity: generalMembers.length > 0 ? generalCapacity / generalMembers.length : 0,
-    nonGeneralPerPersonCapacity: nonGeneralMembers.length > 0 ? nonGeneralCapacity / nonGeneralMembers.length : 0,
+    generalOnlyCapacity,
+    switchingGeneralCapacity,
+    generalPerPersonCapacity: teamCount > 0 ? generalCapacity / teamCount : 0,
+    nonGeneralPerPersonCapacity: teamCount > 0 ? nonGeneralCapacity / teamCount : 0,
   };
 }
 
@@ -199,8 +200,9 @@ function simulateCategoryWork(generalBacklog: number, nonGeneralBacklog: number,
     if (!isWorkday(cursor)) continue;
     const nonGeneralDone = Math.min(nonGeneralRemaining, team.nonGeneralCapacity);
     nonGeneralRemaining -= nonGeneralDone;
-    const releasedNonGeneralCapacity = Math.max(0, team.nonGeneralCapacity - nonGeneralDone);
-    const generalDone = Math.min(generalRemaining, team.generalCapacity + releasedNonGeneralCapacity);
+    const nonGeneralUseRatio = team.nonGeneralCapacity > 0 ? nonGeneralDone / team.nonGeneralCapacity : 0;
+    const generalCapacityToday = team.generalOnlyCapacity + team.switchingGeneralCapacity * (1 - nonGeneralUseRatio);
+    const generalDone = Math.min(generalRemaining, generalCapacityToday);
     generalRemaining -= generalDone;
     if (generalRemaining + nonGeneralRemaining <= 0) finishDate = cursor;
   }
@@ -472,26 +474,23 @@ function TeamCapacityEditor({ settings, onChange }: { settings: TeamCapacitySett
     <div className="team-editor">
       <div className="member-card">
           <div className="member-list">
-            <div className="member-row member-header"><span>人員</span><span>產業類型</span><span>每日可完成本數</span><span></span></div>
+            <div className="member-row member-header"><span>人員</span><span>一般每日本數</span><span>非一般每日本數</span><span></span></div>
             {settings.members.map((member, index) => (
               <div className="member-row" key={member.id}>
                 <input aria-label={`第 ${index + 1} 位人員姓名`} type="text" value={member.name} placeholder={`同仁 ${index + 1}`} onChange={(event) => updateMember(member.id, { name: event.target.value })} />
-                <select aria-label={`${member.name || `第 ${index + 1} 位人員`}負責產業類型`} value={member.category ?? 'general'} onChange={(event) => updateMember(member.id, { category: event.target.value as WorkCategory })}>
-                  <option value="general">一般產業（F）</option>
-                  <option value="nonGeneral">非一般產業</option>
-                </select>
-                <span className="input-with-suffix member-speed"><input aria-label={`${member.name || `第 ${index + 1} 位人員`}每日可完成本數`} type="number" min="0" step="0.1" value={member.dailyBooks} onChange={(event) => updateMember(member.id, { dailyBooks: Number(event.target.value) })} /><b>本／日</b></span>
+                <span className="input-with-suffix member-speed"><input aria-label={`${member.name || `第 ${index + 1} 位人員`}一般每日可完成本數`} type="number" min="0" step="0.1" value={member.generalBooks} onChange={(event) => updateMember(member.id, { generalBooks: Number(event.target.value) })} /><b>本／日</b></span>
+                <span className="input-with-suffix member-speed"><input aria-label={`${member.name || `第 ${index + 1} 位人員`}非一般每日可完成本數`} type="number" min="0" step="0.1" value={member.nonGeneralBooks} onChange={(event) => updateMember(member.id, { nonGeneralBooks: Number(event.target.value) })} /><b>本／日</b></span>
                 <button className="delete-row" aria-label={`刪除${member.name || `第 ${index + 1} 位人員`}`} onClick={() => onChange({ members: settings.members.filter((item) => item.id !== member.id) })}>×</button>
               </div>
             ))}
           </div>
-          <button className="add-row" onClick={() => onChange({ members: [...settings.members, { id: makeId(), name: `同仁 ${settings.members.length + 1}`, dailyBooks: settings.members[0]?.dailyBooks ?? 9, category: 'general' }] })}>＋ 新增人員</button>
+          <button className="add-row" onClick={() => onChange({ members: [...settings.members, { id: makeId(), name: `同仁 ${settings.members.length + 1}`, generalBooks: settings.members[0]?.generalBooks ?? 9, nonGeneralBooks: settings.members[0]?.nonGeneralBooks ?? 0 }] })}>＋ 新增人員</button>
       </div>
 
       <div className="team-summary">
         <span>團隊人數 <strong>{team.teamCount} 人</strong></span>
         <span>團隊每日產能 <strong>{compactNumber(team.dailyCapacity, 1)} 本</strong></span>
-        <small>一般 {team.generalCount} 人／{compactNumber(team.generalCapacity, 1)} 本，非一般 {team.nonGeneralCount} 人／{compactNumber(team.nonGeneralCapacity, 1)} 本；非一般完成後，空出的產能轉做一般</small>
+        <small>一般 {team.generalCount} 人／{compactNumber(team.generalCapacity, 1)} 本，非一般 {team.nonGeneralCount} 人／{compactNumber(team.nonGeneralCapacity, 1)} 本；非一般完成後，該員剩餘時間轉做一般</small>
       </div>
     </div>
   );
@@ -524,14 +523,17 @@ function ForecastWorkspace() {
         try {
           const parsed = JSON.parse(saved) as { settings: Partial<ForecastSettings>; rows: HistoricalRow[] };
           const migrateDefaultPeople = parsed.settings.defaultsVersion === undefined && parsed.settings.people === 12;
-          const savedMembers = parsed.settings.members ?? [];
+          const savedMembers = (parsed.settings.members ?? []) as Array<TeamMember & { dailyBooks?: number; category?: string }>;
           const migrateDefaultMembers = (parsed.settings.defaultsVersion ?? 0) < 3 && savedMembers.length === 8;
-          const members = (migrateDefaultMembers ? savedMembers.slice(0, 4) : (savedMembers.length ? savedMembers : createDefaultMembers(10))).map((member, index) => ({
-            id: member.id || `member-${index + 1}`,
-            name: member.name || `同仁 ${index + 1}`,
-            dailyBooks: Number(member.dailyBooks) || 0,
-            category: member.category === 'nonGeneral' ? 'nonGeneral' as WorkCategory : 'general' as WorkCategory,
-          }));
+          const members = (migrateDefaultMembers ? savedMembers.slice(0, 4) : (savedMembers.length ? savedMembers : createDefaultMembers(10))).map((member, index) => {
+            const legacy = member as TeamMember & { dailyBooks?: number; category?: string };
+            return {
+            id: legacy.id || `member-${index + 1}`,
+            name: legacy.name || `同仁 ${index + 1}`,
+            generalBooks: Number(legacy.generalBooks ?? legacy.dailyBooks) || 0,
+            nonGeneralBooks: Number(legacy.nonGeneralBooks ?? (legacy.category === 'nonGeneral' ? legacy.dailyBooks : 0)) || 0,
+            };
+          });
           setSettings({
             ...initialForecastSettings,
             ...parsed.settings,
@@ -766,14 +768,17 @@ function LiveWorkspace() {
         try {
           const parsed = JSON.parse(saved) as { settings: Partial<LiveSettings>; rows: LiveRow[] };
           const migrateDefaultPeople = parsed.settings.defaultsVersion === undefined && parsed.settings.people === 8;
-          const savedMembers = parsed.settings.members ?? [];
+          const savedMembers = (parsed.settings.members ?? []) as Array<TeamMember & { dailyBooks?: number; category?: string }>;
           const migrateDefaultMembers = (parsed.settings.defaultsVersion ?? 0) < 3 && savedMembers.length === 8;
-          const members = (migrateDefaultMembers ? savedMembers.slice(0, 4) : (savedMembers.length ? savedMembers : createDefaultMembers(9))).map((member, index) => ({
-            id: member.id || `member-${index + 1}`,
-            name: member.name || `同仁 ${index + 1}`,
-            dailyBooks: Number(member.dailyBooks) || 0,
-            category: member.category === 'nonGeneral' ? 'nonGeneral' as WorkCategory : 'general' as WorkCategory,
-          }));
+          const members = (migrateDefaultMembers ? savedMembers.slice(0, 4) : (savedMembers.length ? savedMembers : createDefaultMembers(9))).map((member, index) => {
+            const legacy = member as TeamMember & { dailyBooks?: number; category?: string };
+            return {
+            id: legacy.id || `member-${index + 1}`,
+            name: legacy.name || `同仁 ${index + 1}`,
+            generalBooks: Number(legacy.generalBooks ?? legacy.dailyBooks) || 0,
+            nonGeneralBooks: Number(legacy.nonGeneralBooks ?? (legacy.category === 'nonGeneral' ? legacy.dailyBooks : 0)) || 0,
+            };
+          });
           const restoredSettings = {
             ...initialLiveSettings,
             ...parsed.settings,
