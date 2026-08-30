@@ -737,6 +737,7 @@ function LiveWorkspace() {
             people: migrateDefaultPeople ? 4 : (parsed.settings.people ?? 4),
             members: migrateDefaultMembers ? savedMembers.slice(0, 4) : savedMembers,
           };
+          if (restoredSettings.importedCompanies.length) restoredSettings.expectedRemaining = summarizeCompanies(restoredSettings.importedCompanies, restoredSettings.seasonStartDate, localTodayISO()).pending;
           setSettings(restoredSettings);
           setRows(restoredSettings.importedCompanies.length ? rowsFromCompanies(restoredSettings.importedCompanies, restoredSettings.seasonStartDate, localTodayISO()) : (parsed.rows?.some((row) => row.date) ? parsed.rows : createDailyRows(restoredSettings.seasonStartDate, localTodayISO())));
         } catch { /* keep defaults */ }
@@ -762,7 +763,12 @@ function LiveWorkspace() {
     const received = validRows.reduce((sum, row) => sum + row.received, 0);
     const completed = validRows.reduce((sum, row) => sum + row.completed, 0);
     const backlog = Math.max(0, settings.openingBacklog + received - completed);
-    const outstanding = backlog + settings.expectedRemaining;
+    const futureAnnounced = settings.importedCompanies.filter((company) => {
+      if (!company.announcementDate) return false;
+      const workDate = reportWorkDate(company.announcementDate);
+      return workDate >= settings.seasonStartDate && workDate > localTodayISO();
+    }).length;
+    const outstanding = backlog + settings.expectedRemaining + futureAnnounced;
     const latestDate = parseDate(validRows[validRows.length - 1].date);
     const nextDate = addDays(latestDate, 1);
     const deadline = parseDate(settings.completionDate);
@@ -858,7 +864,7 @@ function LiveWorkspace() {
     const today = localTodayISO();
     const start = settings.seasonStartDate;
     const counts = summarizeCompanies(companies, start, today);
-    setSettings((current) => ({ ...current, importedCompanies: companies }));
+    setSettings((current) => ({ ...current, expectedRemaining: counts.pending, importedCompanies: companies }));
     setImportSummary({ total: companies.length, ...counts, duplicates: Math.max(0, rawCount - companies.length) });
     setImportError('');
   }
@@ -894,7 +900,7 @@ function LiveWorkspace() {
     const start = settings.seasonStartDate;
     const counts = summarizeCompanies(updatedCompanies, start, today);
     setRows(rowsFromCompanies(updatedCompanies, start, today));
-    setSettings((current) => ({ ...current, expectedRemaining: counts.pending + counts.notDue, importedCompanies: updatedCompanies }));
+    setSettings((current) => ({ ...current, expectedRemaining: counts.pending, importedCompanies: updatedCompanies }));
     setImportSummary({ total: updatedCompanies.length, ...counts, duplicates: 0 });
     setImportError(`已依 ${selectedSheets.map((sheet) => sheet.name).join('、')} 的完成日更新實績。`);
   }
