@@ -80,13 +80,32 @@ function addDays(date: Date, days: number) {
   return new Date(date.getTime() + days * DAY);
 }
 
-function dayDiff(date: Date, anchor: Date) {
-  return Math.round((date.getTime() - anchor.getTime()) / DAY);
-}
-
 function isWorkday(date: Date) {
   const day = date.getUTCDay();
   return day !== 0 && day !== 6;
+}
+
+function businessDayDiff(date: Date, anchor: Date) {
+  if (date.getTime() === anchor.getTime()) return 0;
+  const direction = date > anchor ? 1 : -1;
+  let offset = 0;
+  for (let cursor = anchor; cursor.getTime() !== date.getTime();) {
+    cursor = addDays(cursor, direction);
+    if (isWorkday(cursor)) offset += direction;
+  }
+  return offset;
+}
+
+function addBusinessDays(anchor: Date, offset: number) {
+  if (offset === 0) return anchor;
+  const direction = offset > 0 ? 1 : -1;
+  let remaining = Math.abs(offset);
+  let cursor = anchor;
+  while (remaining > 0) {
+    cursor = addDays(cursor, direction);
+    if (isWorkday(cursor)) remaining -= 1;
+  }
+  return cursor;
 }
 
 function formatDate(value: string | Date) {
@@ -243,8 +262,8 @@ function ForecastWorkspace() {
     const deadline = parseDate(settings.completionDate);
     const dailyCapacity = settings.people * settings.speed * (settings.efficiency / 100);
     const mapped = validRows.map((row) => {
-      const offset = dayDiff(parseDate(row.date), oldAnchor);
-      return { ...row, offset, mappedDate: toISO(addDays(newAnchor, offset)) };
+      const offset = businessDayDiff(parseDate(row.date), oldAnchor);
+      return { ...row, offset, mappedDate: toISO(addBusinessDays(newAnchor, offset)) };
     });
     const demand = new Map<string, number>();
     mapped.forEach((row) => demand.set(row.mappedDate, (demand.get(row.mappedDate) ?? 0) + row.quantity));
@@ -329,7 +348,7 @@ function ForecastWorkspace() {
           <div><span>STEP 1</span><h2>設定換算基準</h2></div>
           <details>
             <summary>T 日怎麼算？</summary>
-            <p>歷史日期相對「歷史 T 日」的日曆天差，就是 T±N；再把相同天差套到本季 T 日。週末仍會映射，但不計入人力產能。</p>
+            <p>從歷史 T 日往前或往後數工作日，星期六、星期日直接跳過，不增加 T 日數；再從本季 T 日以相同工作日數回推或前推。若輸入日期本身是週末，會與相鄰工作日共用同一個 T 值。</p>
           </details>
         </div>
         <div className="form-card three-fields">
@@ -350,7 +369,7 @@ function ForecastWorkspace() {
           <div className="data-table historical-table">
             <div className="table-row table-header"><span>歷史日期</span><span>T 日</span><span>財報數量</span><span></span></div>
             {rows.map((row) => {
-              const offset = row.date && settings.historicalAnchor ? dayDiff(parseDate(row.date), parseDate(settings.historicalAnchor)) : null;
+              const offset = row.date && settings.historicalAnchor ? businessDayDiff(parseDate(row.date), parseDate(settings.historicalAnchor)) : null;
               return (
                 <div className="table-row" key={row.id}>
                   <input aria-label="歷史日期" type="date" value={row.date} onChange={(event) => updateRow(row.id, { date: event.target.value })} />
