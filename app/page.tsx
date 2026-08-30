@@ -289,6 +289,19 @@ function reportWorkDate(announcementDate: string) {
   return toISO(addBusinessDays(parseDate(announcementDate), 1));
 }
 
+function rowsFromCompanies(companies: ImportedCompany[], startDate: string, endDate: string) {
+  const receivedByDate = new Map<string, number>();
+  const completedByDate = new Map<string, number>();
+  companies.forEach((company) => {
+    if (company.announcementDate) {
+      const workDate = reportWorkDate(company.announcementDate);
+      if (workDate >= startDate && workDate <= endDate) receivedByDate.set(workDate, (receivedByDate.get(workDate) ?? 0) + 1);
+    }
+    if (company.completionDate && company.completionDate >= startDate && company.completionDate <= endDate) completedByDate.set(company.completionDate, (completedByDate.get(company.completionDate) ?? 0) + 1);
+  });
+  return createDailyRows(startDate, endDate).map((row) => ({ ...row, received: receivedByDate.get(row.date) ?? 0, completed: completedByDate.get(row.date) ?? 0 }));
+}
+
 function mergeCompany(existing: ImportedCompany, incoming: ImportedCompany) {
   return {
     ...existing,
@@ -770,7 +783,7 @@ function LiveWorkspace() {
 
   function updateSeasonStart(value: string) {
     setSettings((current) => ({ ...current, seasonStartDate: value }));
-    setRows((current) => syncDailyRows(current, value, localTodayISO()));
+    setRows((current) => settings.importedCompanies.length ? rowsFromCompanies(settings.importedCompanies, value, localTodayISO()) : syncDailyRows(current, value, localTodayISO()));
   }
 
   async function readWorkbook(event: ChangeEvent<HTMLInputElement>, kind: 'company' | 'manpower') {
@@ -873,19 +886,15 @@ function LiveWorkspace() {
     const updatedCompanies = settings.importedCompanies.map((company) => ({ ...company, completionDate: completionByCompany.get(company.code || company.name) ?? company.completionDate }));
     const today = localTodayISO();
     const start = settings.seasonStartDate;
-    const receivedByDate = new Map<string, number>();
-    const completedByDate = new Map<string, number>();
     let announced = 0;
     let pending = 0;
     updatedCompanies.forEach((company) => {
       const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
       if (workDate && workDate >= start && workDate <= today) {
         announced += 1;
-        receivedByDate.set(workDate, (receivedByDate.get(workDate) ?? 0) + 1);
       } else if (!workDate || workDate > today) pending += 1;
-      if (company.completionDate && company.completionDate >= start && company.completionDate <= today) completedByDate.set(company.completionDate, (completedByDate.get(company.completionDate) ?? 0) + 1);
     });
-    setRows(createDailyRows(start, today).map((row) => ({ ...row, received: receivedByDate.get(row.date) ?? 0, completed: completedByDate.get(row.date) ?? 0 })));
+    setRows(rowsFromCompanies(updatedCompanies, start, today));
     setSettings((current) => ({ ...current, expectedRemaining: pending, importedCompanies: updatedCompanies }));
     const beforeSeason = updatedCompanies.filter((company) => {
       const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
