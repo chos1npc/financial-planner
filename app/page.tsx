@@ -323,6 +323,11 @@ function summarizeCompanies(companies: ImportedCompany[], startDate: string, tod
   return { announced, due, pending, notDue: Math.max(0, announced - due), beforeSeason };
 }
 
+function availableReportsForDate(date: string, companies: ImportedCompany[]) {
+  const previousWorkday = toISO(addBusinessDays(parseDate(date), -1));
+  return companies.filter((company) => company.announcementDate && company.announcementDate >= previousWorkday && company.announcementDate < date).length;
+}
+
 function mergeCompany(existing: ImportedCompany, incoming: ImportedCompany) {
   return {
     ...existing,
@@ -936,16 +941,23 @@ function LiveWorkspace() {
         </div>
         <div className="data-table-card">
           <div className="data-table live-table">
-            <div className="table-row table-header"><span>日期</span><span>實際收到</span><span>實際完成</span><span></span></div>
+            <div className="table-row table-header"><span>日期</span><span>當日可做本數</span><span>實際完成</span><span>完成差額</span><span></span></div>
             {rows.map((row) => (
               <div className="table-row" key={row.id}>
+                {(() => {
+                  const available = settings.importedCompanies.length ? availableReportsForDate(row.date, settings.importedCompanies) : row.received;
+                  const difference = row.completed - available;
+                  return <>
                 <div className="table-date-cell">
                   <input aria-label="實績日期" type="date" value={row.date} onChange={(event) => updateRow(row.id, { date: event.target.value })} />
                   {row.date && <small className={!isWorkday(parseDate(row.date)) ? 'is-weekend' : ''}>{formatWeekday(row.date)}{!isWorkday(parseDate(row.date)) ? '・非工作日' : ''}</small>}
                 </div>
-                <input aria-label="實際收到量" type="number" min="0" value={row.received || ''} placeholder="0" onChange={(event) => updateRow(row.id, { received: Number(event.target.value) })} />
+                <input aria-label="當日可做本數" type="number" min="0" value={available || ''} placeholder="0" readOnly={settings.importedCompanies.length > 0} onChange={(event) => updateRow(row.id, { received: Number(event.target.value) })} />
                 <input aria-label="實際完成量" type="number" min="0" value={row.completed || ''} placeholder="0" onChange={(event) => updateRow(row.id, { completed: Number(event.target.value) })} />
+                <span className={`completion-difference ${difference > 0 ? 'is-over' : ''}`}>{difference > 0 ? `+${difference}` : difference}</span>
                 <button className="delete-row" aria-label="刪除這一列" onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}>×</button>
+                  </>;
+                })()}
               </div>
             ))}
           </div>

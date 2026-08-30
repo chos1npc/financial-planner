@@ -384,12 +384,14 @@ button { color: inherit; }
 .table-date-cell { display: grid; gap: 3px; }
 .table-date-cell small { color: #36784f; font-size: 9px; font-weight: 800; }
 .table-date-cell small.is-weekend { color: var(--coral-dark); }
+.completion-difference { color: var(--muted); font-size: 11px; font-weight: 800; }
+.completion-difference.is-over { color: var(--coral-dark); }
 
 .data-table-card { overflow: hidden; border-radius: 4px 18px 4px 4px; }
 .data-table { overflow-x: auto; }
 .table-row { min-width: 600px; display: grid; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #e5e7e1; }
 .historical-table .table-row { grid-template-columns: minmax(170px, 1.4fr) 74px minmax(120px, 1fr) 28px; }
-.live-table .table-row { grid-template-columns: minmax(170px, 1.4fr) minmax(110px, 1fr) minmax(110px, 1fr) 28px; }
+.live-table .table-row { grid-template-columns: minmax(170px, 1.35fr) minmax(120px, 1fr) minmax(110px, 1fr) 74px 28px; }
 .table-row.table-header { padding-block: 12px; background: #eef0eb; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
 .table-row input { width: 100%; height: 38px; padding: 0 9px; border: 1px solid #d3d7d1; border-radius: 3px; background: white; color: var(--ink); }
 .table-row input:focus { border-color: var(--teal); outline: 2px solid rgba(23,79,86,.12); }
