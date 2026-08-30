@@ -992,7 +992,7 @@ function LiveWorkspace() {
         </div>
         <div className="data-table-card">
           <div className="data-table live-table">
-            <div className="table-row table-header"><span>日期</span><span>當日可做</span><span>實際完成</span><span>當日剩餘</span><span></span></div>
+            <div className="table-row table-header"><span>日期</span><span>當日可做</span><span>實際完成</span><span>當日剩餘</span><span>累計剩餘</span><span></span></div>
             {tableRows.map((row) => (
               <div className="table-row" key={row.id}>
                 <div className="table-date-cell">
@@ -1002,6 +1002,7 @@ function LiveWorkspace() {
                 </div>
                 <input aria-label="當日可做本數" type="number" min="0" value={(dailyComparisonByDate.get(row.date)?.newCodes.length ?? row.incoming) || ''} placeholder="0" readOnly={settings.importedCompanies.length > 0} onChange={(event) => updateRow(row.id, { received: Number(event.target.value) })} />
                 <input aria-label="實際完成量" type="number" min="0" value={row.completed || ''} placeholder="0" onChange={(event) => updateRow(row.id, { completed: Number(event.target.value) })} />
+                <span className={`daily-remaining ${(dailyComparisonByDate.get(row.date)?.newCodes.length ?? row.incoming) - row.completed < 0 ? 'is-negative' : ''}`}>{(dailyComparisonByDate.get(row.date)?.newCodes.length ?? row.incoming) - row.completed}</span>
                 <span className="remaining-count">{dailyComparisonByDate.get(row.date)?.endingBacklogCodes.length ?? row.endingBacklog}</span>
                 <button className="delete-row" aria-label="刪除這一列" onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}>×</button>
               </div>
