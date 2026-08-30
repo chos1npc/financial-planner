@@ -324,17 +324,14 @@ function summarizeCompanies(companies: ImportedCompany[], startDate: string, tod
   return { announced, due, pending, notDue: Math.max(0, announced - due), beforeSeason };
 }
 
+function issuedCompaniesForPeriod(companies: ImportedCompany[], startDate: string, today: string) {
+  const previousWorkday = toISO(addBusinessDays(parseDate(startDate), -1));
+  return companies.filter((company) => Boolean(company.announcementDate && company.announcementDate >= previousWorkday && company.announcementDate <= today));
+}
+
 function availableReportsForDate(date: string, companies: ImportedCompany[]) {
   const previousWorkday = toISO(addBusinessDays(parseDate(date), -1));
   return companies.filter((company) => company.announcementDate && company.announcementDate >= previousWorkday && company.announcementDate < date).length;
-}
-
-function openingBacklogFromCompanies(companies: ImportedCompany[], startDate: string) {
-  return companies.filter((company) => {
-    if (!company.completionDate || company.completionDate < startDate) return false;
-    const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
-    return !workDate || workDate < startDate;
-  }).length;
 }
 
 function mergeCompany(existing: ImportedCompany, incoming: ImportedCompany) {
@@ -758,8 +755,8 @@ function LiveWorkspace() {
             members: migrateDefaultMembers ? savedMembers.slice(0, 4) : savedMembers,
           };
           if (restoredSettings.importedCompanies.length) {
-            restoredSettings.expectedRemaining = summarizeCompanies(restoredSettings.importedCompanies, restoredSettings.seasonStartDate, localTodayISO()).pending;
-            if (!restoredSettings.openingBacklog) restoredSettings.openingBacklog = openingBacklogFromCompanies(restoredSettings.importedCompanies, restoredSettings.seasonStartDate);
+            restoredSettings.expectedRemaining = 0;
+            restoredSettings.openingBacklog = 0;
           }
           setSettings(restoredSettings);
           setRows(restoredSettings.importedCompanies.length ? rowsFromCompanies(restoredSettings.importedCompanies, restoredSettings.seasonStartDate, localTodayISO()) : (parsed.rows?.some((row) => row.date) ? parsed.rows : createDailyRows(restoredSettings.seasonStartDate, localTodayISO())));
@@ -795,15 +792,13 @@ function LiveWorkspace() {
     const result = new Map<string, DailyComparison>();
     if (!settings.importedCompanies.length) return result;
     const start = settings.seasonStartDate;
+    const today = localTodayISO();
     const previousWorkday = toISO(addBusinessDays(parseDate(start), -1));
+    const scopedCompanies = issuedCompaniesForPeriod(settings.importedCompanies, start, today);
     const pending = new Map<string, string>();
-    settings.importedCompanies.forEach((company) => {
-      const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
-      if (company.completionDate && company.completionDate >= start && (!workDate || workDate < start)) pending.set(companyIdentity(company.code, company.name), company.code || company.name);
-    });
     tableRows.forEach((row) => {
       const newCodes: string[] = [];
-      settings.importedCompanies.forEach((company) => {
+      scopedCompanies.forEach((company) => {
         if (!company.announcementDate || company.announcementDate < previousWorkday || company.announcementDate >= row.date) return;
         const key = companyIdentity(company.code, company.name);
         if (!pending.has(key)) {
@@ -811,7 +806,7 @@ function LiveWorkspace() {
           newCodes.push(company.code || company.name);
         }
       });
-      const completedCompanies = settings.importedCompanies.filter((company) => company.completionDate === row.date);
+      const completedCompanies = scopedCompanies.filter((company) => company.completionDate === row.date);
       const availableCodes = [...pending.values()];
       const completedCodes = completedCompanies.map((company) => company.code || company.name);
       const matchedCodes = completedCompanies.filter((company) => pending.has(companyIdentity(company.code, company.name))).map((company) => company.code || company.name);
@@ -823,15 +818,13 @@ function LiveWorkspace() {
   }, [settings.importedCompanies, settings.seasonStartDate, tableRows]);
   const result = useMemo(() => {
     if (!validRows.length || !settings.completionDate) return null;
-    const received = validRows.reduce((sum, row) => sum + row.received, 0);
-    const completed = validRows.reduce((sum, row) => sum + row.completed, 0);
-    const backlog = Math.max(0, settings.openingBacklog + received - completed);
-    const futureAnnounced = settings.importedCompanies.filter((company) => {
-      if (!company.announcementDate) return false;
-      const workDate = reportWorkDate(company.announcementDate);
-      return workDate >= settings.seasonStartDate && workDate > localTodayISO();
-    }).length;
-    const outstanding = backlog + settings.expectedRemaining + futureAnnounced;
+    const today = localTodayISO();
+    const issuedCompanies = issuedCompaniesForPeriod(settings.importedCompanies, settings.seasonStartDate, today);
+    const importedMode = settings.importedCompanies.length > 0;
+    const received = importedMode ? issuedCompanies.length : validRows.reduce((sum, row) => sum + row.received, 0);
+    const completed = importedMode ? issuedCompanies.filter((company) => Boolean(company.completionDate && company.completionDate <= today)).length : validRows.reduce((sum, row) => sum + row.completed, 0);
+    const backlog = Math.max(0, received - completed);
+    const outstanding = importedMode ? backlog : backlog + settings.expectedRemaining;
     const latestDate = parseDate(validRows[validRows.length - 1].date);
     const nextDate = addDays(latestDate, 1);
     const deadline = parseDate(settings.completionDate);
@@ -865,7 +858,7 @@ function LiveWorkspace() {
   }
 
   function updateSeasonStart(value: string) {
-    setSettings((current) => ({ ...current, seasonStartDate: value, openingBacklog: current.importedCompanies.length ? openingBacklogFromCompanies(current.importedCompanies, value) : current.openingBacklog }));
+    setSettings((current) => ({ ...current, seasonStartDate: value, openingBacklog: current.importedCompanies.length ? 0 : current.openingBacklog }));
     setRows((current) => settings.importedCompanies.length ? rowsFromCompanies(settings.importedCompanies, value, localTodayISO()) : syncDailyRows(current, value, localTodayISO()));
   }
 
@@ -927,7 +920,7 @@ function LiveWorkspace() {
     const today = localTodayISO();
     const start = settings.seasonStartDate;
     const counts = summarizeCompanies(companies, start, today);
-    setSettings((current) => ({ ...current, expectedRemaining: counts.pending, importedCompanies: companies }));
+    setSettings((current) => ({ ...current, expectedRemaining: 0, importedCompanies: companies }));
     setImportSummary({ total: companies.length, ...counts, duplicates: Math.max(0, rawCount - companies.length) });
     setImportError('');
   }
@@ -963,7 +956,7 @@ function LiveWorkspace() {
     const start = settings.seasonStartDate;
     const counts = summarizeCompanies(updatedCompanies, start, today);
     setRows(rowsFromCompanies(updatedCompanies, start, today));
-    setSettings((current) => ({ ...current, openingBacklog: openingBacklogFromCompanies(updatedCompanies, start), expectedRemaining: counts.pending, importedCompanies: updatedCompanies }));
+    setSettings((current) => ({ ...current, openingBacklog: 0, expectedRemaining: 0, importedCompanies: updatedCompanies }));
     setImportSummary({ total: updatedCompanies.length, ...counts, duplicates: 0 });
     setImportError(`已依 ${selectedSheets.map((sheet) => sheet.name).join('、')} 的完成日更新實績。`);
   }
@@ -1022,7 +1015,7 @@ function LiveWorkspace() {
         <div className="section-heading"><div><span>STEP 4</span><h2>設定剩餘工作</h2></div></div>
         <div className="form-card two-fields">
           <NumberField label="期初未完成" value={settings.openingBacklog} onChange={(value) => setSettings({ ...settings, openingBacklog: value })} suffix="件" hint="第一筆實績前就存在的待辦" />
-          <NumberField label="預計後續還會收到" value={settings.expectedRemaining} onChange={(value) => setSettings({ ...settings, expectedRemaining: value })} suffix="件" hint="不知道可先填 0，再做保守情境" />
+          <NumberField label="預計後續還會收到（未匯入時）" value={settings.expectedRemaining} onChange={(value) => setSettings({ ...settings, expectedRemaining: value })} suffix="件" hint="匯入公司清單後，統計只計算忙季前一工作日至今天的已公告公司" />
         </div>
 
       </section>
