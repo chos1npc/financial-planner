@@ -9,6 +9,7 @@ type TeamMember = { id: string; name: string; dailyBooks: number };
 type HistoricalRow = { id: string; date: string; quantity: number };
 type LiveRow = { id: string; date: string; received: number; completed: number };
 type ImportedCompany = { id: string; code: string; name: string; announcementDate: string | null; completionDate: string | null };
+type DailyComparison = { date: string; availableCodes: string[]; completedCodes: string[]; matchedCodes: string[]; completedOnlyCodes: string[]; endingBacklogCodes: string[] };
 type WorkbookSheet = { name: string; headers: string[]; rows: string[][] };
 type ParsedWorkbookSheet = WorkbookSheet & {
   codeIndex: number;
@@ -343,6 +344,12 @@ function mergeCompany(existing: ImportedCompany, incoming: ImportedCompany) {
     announcementDate: existing.announcementDate ?? incoming.announcementDate,
     completionDate: existing.completionDate ?? incoming.completionDate,
   };
+}
+
+function companyIdentity(code: string, name: string) {
+  const normalizedCode = code.trim();
+  if (normalizedCode) return /^\d+$/.test(normalizedCode) ? normalizedCode.replace(/^0+(?=\d)/, '') : normalizedCode.toLocaleLowerCase();
+  return name.trim().toLocaleLowerCase();
 }
 
 function Metric({ label, value, note }: { label: string; value: string; note: string }) {
@@ -784,6 +791,32 @@ function LiveWorkspace() {
     }, { backlog: settings.openingBacklog, rows: [] });
     return calculated.rows;
   }, [rows, settings.importedCompanies, settings.openingBacklog]);
+  const dailyComparisonByDate = useMemo(() => {
+    const result = new Map<string, DailyComparison>();
+    if (!settings.importedCompanies.length) return result;
+    const start = settings.seasonStartDate;
+    const previousWorkday = toISO(addBusinessDays(parseDate(start), -1));
+    const pending = new Map<string, string>();
+    settings.importedCompanies.forEach((company) => {
+      const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
+      if (company.completionDate && company.completionDate >= start && (!workDate || workDate < start)) pending.set(companyIdentity(company.code, company.name), company.code || company.name);
+    });
+    tableRows.forEach((row) => {
+      settings.importedCompanies.forEach((company) => {
+        if (!company.announcementDate || company.announcementDate < previousWorkday || company.announcementDate >= row.date) return;
+        const key = companyIdentity(company.code, company.name);
+        if (!pending.has(key)) pending.set(key, company.code || company.name);
+      });
+      const completedCompanies = settings.importedCompanies.filter((company) => company.completionDate === row.date);
+      const availableCodes = [...pending.values()];
+      const completedCodes = completedCompanies.map((company) => company.code || company.name);
+      const matchedCodes = completedCompanies.filter((company) => pending.has(companyIdentity(company.code, company.name))).map((company) => company.code || company.name);
+      const completedOnlyCodes = completedCompanies.filter((company) => !pending.has(companyIdentity(company.code, company.name))).map((company) => company.code || company.name);
+      completedCompanies.forEach((company) => pending.delete(companyIdentity(company.code, company.name)));
+      result.set(row.date, { date: row.date, availableCodes, completedCodes, matchedCodes, completedOnlyCodes, endingBacklogCodes: [...pending.values()] });
+    });
+    return result;
+  }, [settings.importedCompanies, settings.seasonStartDate, tableRows]);
   const result = useMemo(() => {
     if (!validRows.length || !settings.completionDate) return null;
     const received = validRows.reduce((sum, row) => sum + row.received, 0);
@@ -870,7 +903,7 @@ function LiveWorkspace() {
       if (String(row[sheet.periodIndex] ?? '').trim() !== importAnnyymm || String(row[sheet.quarterIndex] ?? '').trim() !== importQuarter) return;
       const code = String(row[sheet.codeIndex] ?? '').trim();
       const name = String(row[sheet.nameIndex] ?? '').trim();
-      const key = code || name;
+      const key = companyIdentity(code, name);
       if (!key) return;
       rawCount += 1;
       const company: ImportedCompany = {
@@ -917,11 +950,11 @@ function LiveWorkspace() {
       if (String(row[sheet.periodIndex] ?? '').trim() !== importAnnyymm || String(row[sheet.quarterIndex] ?? '').trim() !== importQuarter || sheet.completionIndex < 0) return;
       const code = String(row[sheet.codeIndex] ?? '').trim();
       const name = String(row[sheet.nameIndex] ?? '').trim();
-      const key = code || name;
+      const key = companyIdentity(code, name);
       const completion = normalizeDateValue(row[sheet.completionIndex], fallbackYear);
       if (key && completion && !completionByCompany.has(key)) completionByCompany.set(key, completion);
     }));
-    const updatedCompanies = settings.importedCompanies.map((company) => ({ ...company, completionDate: completionByCompany.get(company.code || company.name) ?? company.completionDate }));
+    const updatedCompanies = settings.importedCompanies.map((company) => ({ ...company, completionDate: completionByCompany.get(companyIdentity(company.code, company.name)) ?? company.completionDate }));
     const today = localTodayISO();
     const start = settings.seasonStartDate;
     const counts = summarizeCompanies(updatedCompanies, start, today);
@@ -968,10 +1001,11 @@ function LiveWorkspace() {
                 <div className="table-date-cell">
                   <input aria-label="實績日期" type="date" value={row.date} onChange={(event) => updateRow(row.id, { date: event.target.value })} />
                   {row.date && <small className={!isWorkday(parseDate(row.date)) ? 'is-weekend' : ''}>{formatWeekday(row.date)}{!isWorkday(parseDate(row.date)) ? '・非工作日' : ''}</small>}
+                  {dailyComparisonByDate.get(row.date) && <details className="code-detail"><summary>查看公司碼</summary><div><small>可做：{dailyComparisonByDate.get(row.date)!.availableCodes.join('、') || '—'}</small><small>已做：{dailyComparisonByDate.get(row.date)!.completedCodes.join('、') || '—'}</small><small>未配對：{dailyComparisonByDate.get(row.date)!.completedOnlyCodes.join('、') || '—'}</small></div></details>}
                 </div>
-                <input aria-label="當日可做本數" type="number" min="0" value={row.available || ''} placeholder="0" readOnly={settings.importedCompanies.length > 0} onChange={(event) => updateRow(row.id, { received: Number(event.target.value) })} />
+                <input aria-label="當日可做本數" type="number" min="0" value={(dailyComparisonByDate.get(row.date)?.availableCodes.length ?? row.available) || ''} placeholder="0" readOnly={settings.importedCompanies.length > 0} onChange={(event) => updateRow(row.id, { received: Number(event.target.value) })} />
                 <input aria-label="實際完成量" type="number" min="0" value={row.completed || ''} placeholder="0" onChange={(event) => updateRow(row.id, { completed: Number(event.target.value) })} />
-                <span className={`completion-difference ${row.difference > 0 ? 'is-over' : ''}`}>{row.difference > 0 ? `+${row.difference}` : row.difference}</span>
+                <span className={`completion-difference ${row.completed - (dailyComparisonByDate.get(row.date)?.availableCodes.length ?? row.available) > 0 ? 'is-over' : ''}`}>{row.completed - (dailyComparisonByDate.get(row.date)?.availableCodes.length ?? row.available) > 0 ? `+${row.completed - (dailyComparisonByDate.get(row.date)?.availableCodes.length ?? row.available)}` : row.completed - (dailyComparisonByDate.get(row.date)?.availableCodes.length ?? row.available)}</span>
                 <button className="delete-row" aria-label="刪除這一列" onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}>×</button>
               </div>
             ))}
