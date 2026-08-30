@@ -685,7 +685,7 @@ function LiveWorkspace() {
   const [importAnnyymm, setImportAnnyymm] = useState('');
   const [importQuarter, setImportQuarter] = useState('');
   const [importError, setImportError] = useState('');
-  const [importSummary, setImportSummary] = useState<{ total: number; announced: number; pending: number; duplicates: number } | null>(null);
+  const [importSummary, setImportSummary] = useState<{ total: number; announced: number; pending: number; beforeSeason: number; duplicates: number } | null>(null);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -814,8 +814,19 @@ function LiveWorkspace() {
       setImportError('在目前選擇的 annyymm 與 quarter 找不到公司資料。');
       return;
     }
+    const today = localTodayISO();
+    const start = settings.seasonStartDate;
+    let announced = 0;
+    let pending = 0;
+    let beforeSeason = 0;
+    companies.forEach((company) => {
+      const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
+      if (workDate && workDate < start) beforeSeason += 1;
+      else if (workDate && workDate <= today) announced += 1;
+      else pending += 1;
+    });
     setSettings((current) => ({ ...current, importedCompanies: companies }));
-    setImportSummary({ total: companies.length, announced: companies.filter((company) => Boolean(company.announcementDate)).length, pending: companies.filter((company) => !company.announcementDate).length, duplicates: Math.max(0, rawCount - companies.length) });
+    setImportSummary({ total: companies.length, announced, pending, beforeSeason, duplicates: Math.max(0, rawCount - companies.length) });
     setImportError('');
   }
 
@@ -862,7 +873,11 @@ function LiveWorkspace() {
     });
     setRows(createDailyRows(start, today).map((row) => ({ ...row, received: receivedByDate.get(row.date) ?? 0, completed: completedByDate.get(row.date) ?? 0 })));
     setSettings((current) => ({ ...current, expectedRemaining: pending, importedCompanies: updatedCompanies }));
-    setImportSummary({ total: updatedCompanies.length, announced, pending, duplicates: 0 });
+    const beforeSeason = updatedCompanies.filter((company) => {
+      const workDate = company.announcementDate ? reportWorkDate(company.announcementDate) : null;
+      return Boolean(workDate && workDate < start);
+    }).length;
+    setImportSummary({ total: updatedCompanies.length, announced, pending, beforeSeason, duplicates: 0 });
     setImportError(`已依 ${selectedSheets.map((sheet) => sheet.name).join('、')} 的完成日更新實績。`);
   }
 
@@ -893,7 +908,7 @@ function LiveWorkspace() {
           </div>}
           {manpowerWorkbookSheets.length > 0 && <button className="primary-button manpower-import-button" onClick={applyManpowerImport}>依人名匯入完成日期並更新實績</button>}
           {importError && <div className="import-error">{importError}</div>}
-          {importSummary && <div className="import-summary"><span>唯一公司 <strong>{compactNumber(importSummary.total)}</strong></span><span>已公告 <strong>{compactNumber(importSummary.announced)}</strong></span><span>尚未公告 <strong>{compactNumber(importSummary.pending)}</strong></span><span>去除重複 <strong>{compactNumber(importSummary.duplicates)}</strong></span></div>}
+          {importSummary && <div className="import-summary"><span>唯一公司 <strong>{compactNumber(importSummary.total)}</strong></span><span>忙季內應收到 <strong>{compactNumber(importSummary.announced)}</strong></span><span>尚未公告／尚未到期 <strong>{compactNumber(importSummary.pending)}</strong></span>{importSummary.beforeSeason > 0 && <span>忙季前已公告 <strong>{compactNumber(importSummary.beforeSeason)}</strong></span>}<span>去除重複 <strong>{compactNumber(importSummary.duplicates)}</strong></span></div>}
         </div>
         <div className="data-table-card">
           <div className="data-table live-table">
