@@ -296,7 +296,8 @@ function reportWorkDate(announcementDate: string) {
 function rowsFromCompanies(companies: ImportedCompany[], startDate: string, endDate: string) {
   const receivedByDate = new Map<string, number>();
   const completedByDate = new Map<string, number>();
-  companies.forEach((company) => {
+  const scopedCompanies = issuedCompaniesForPeriod(companies, startDate, endDate);
+  scopedCompanies.forEach((company) => {
     if (company.announcementDate) {
       const workDate = reportWorkDate(company.announcementDate);
       if (workDate >= startDate && workDate <= endDate) receivedByDate.set(workDate, (receivedByDate.get(workDate) ?? 0) + 1);
