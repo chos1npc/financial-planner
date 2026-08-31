@@ -2,14 +2,55 @@
 
 純前端的財報忙季人力預估與即時計算工具。Excel 會在瀏覽器內讀取與計算，不會上傳到後端。
 
-## 本機執行
+## 本機執行（Windows／macOS）
+
+### 1. 安裝 Node.js
+
+請先安裝 Node.js 22.13.0 以上版本：<https://nodejs.org/>
+
+安裝完成後，確認版本：
 
 ```bash
+node --version
+npm --version
+```
+
+### 2. 下載專案
+
+在 GitHub Repository 頁面按 `Code` → `Download ZIP`，解壓縮到電腦；或使用 Git：
+
+```bash
+git clone https://github.com/chos1npc/financial-planner.git
+cd financial-planner
+```
+
+### 3. Windows 啟動方式
+
+開啟 PowerShell，進入專案資料夾：
+
+```powershell
+cd "C:\你的路徑\financial-planner"
+npm.cmd install
+npm.cmd run dev
+```
+
+如果你的 PowerShell 沒有執行原則限制，也可以使用 `npm install` 與 `npm run dev`。
+
+### 4. macOS 啟動方式
+
+開啟 Terminal，進入專案資料夾：
+
+```bash
+cd /你的路徑/financial-planner
 npm install
 npm run dev
 ```
 
-開啟終端機顯示的網址（通常是 `http://localhost:5173`）。
+### 5. 開啟網站與停止伺服器
+
+看到終端機顯示啟動成功後，用瀏覽器開啟 <http://localhost:5173>。要停止網站，在該終端機按 `Ctrl+C`。
+
+Excel 檔案只會在瀏覽器本機讀取，不會上傳到伺服器；每台電腦都需要自行安裝 Node.js 與依賴套件。
 
 ## 功能一：人力預估
 
