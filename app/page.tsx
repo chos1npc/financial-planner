@@ -9,8 +9,9 @@ type TeamMember = { id: string; name: string; generalBooks: number; nonGeneralBo
 type HistoricalRow = { id: string; date: string; quantity: number };
 type LiveRow = { id: string; date: string; received: number; completed: number };
 type ImportedCompany = { id: string; code: string; name: string; finInd: string; announcementDate: string | null; completionDate: string | null; completionMember: string | null };
+type UnlistedCompletion = { code: string; name: string; completionDate: string; completionMember: string };
 type MemberDailyCount = { date: string; member: string; general: number; nonGeneral: number; total: number };
-type DailyComparison = { date: string; newCodes: string[]; availableCodes: string[]; completedCodes: string[]; matchedCodes: string[]; completedOnlyCodes: string[]; endingBacklogCodes: string[] };
+type DailyComparison = { date: string; newCodes: string[]; availableCodes: string[]; completedCodes: string[]; unannouncedCompletedCodes: string[]; matchedCodes: string[]; completedOnlyCodes: string[]; endingBacklogCodes: string[] };
 type WorkbookSheet = { name: string; headers: string[]; rows: string[][] };
 type ParsedWorkbookSheet = WorkbookSheet & {
   codeIndex: number;
@@ -45,6 +46,7 @@ type LiveSettings = {
   openingBacklog: number;
   expectedRemaining: number;
   importedCompanies: ImportedCompany[];
+  unlistedCompletions: UnlistedCompletion[];
 };
 
 const DAY = 86_400_000;
@@ -81,6 +83,7 @@ const initialLiveSettings: LiveSettings = {
   openingBacklog: 0,
   expectedRemaining: 150,
   importedCompanies: [],
+  unlistedCompletions: [],
 };
 
 const forecastExample: HistoricalRow[] = [
@@ -335,6 +338,10 @@ function rowsFromCompanies(companies: ImportedCompany[], startDate: string, endD
       const workDate = reportWorkDate(company.announcementDate);
       if (workDate >= startDate && workDate <= endDate) receivedByDate.set(workDate, (receivedByDate.get(workDate) ?? 0) + 1);
     }
+  });
+  const completionCompanies = [...scopedCompanies, ...companies.filter((company) => !company.announcementDate && company.completionDate)]
+    .filter((company, index, list) => list.findIndex((item) => companyIdentity(item.code, item.name) === companyIdentity(company.code, company.name)) === index);
+  completionCompanies.forEach((company) => {
     if (company.completionDate && company.completionDate >= startDate && company.completionDate <= endDate) completedByDate.set(company.completionDate, (completedByDate.get(company.completionDate) ?? 0) + 1);
   });
   const dates = new Set(createDailyRows(startDate, endDate).map((row) => row.date));
@@ -826,6 +833,12 @@ function LiveWorkspace() {
               finInd: String(company.finInd ?? ''),
               completionMember: company.completionMember ?? null,
             })),
+            unlistedCompletions: (parsed.settings.unlistedCompletions ?? []).map((item) => ({
+              code: String(item.code ?? ''),
+              name: String(item.name ?? ''),
+              completionDate: String(item.completionDate ?? ''),
+              completionMember: String(item.completionMember ?? ''),
+            })),
           };
           if (restoredSettings.importedCompanies.length) {
             restoredSettings.expectedRemaining = 0;
@@ -853,12 +866,16 @@ function LiveWorkspace() {
   }, [importSummary, settings.importedCompanies, settings.seasonStartDate]);
   const unannouncedCounts = useMemo(() => {
     if (!settings.importedCompanies.length) return { general: settings.expectedRemaining, nonGeneral: 0 };
-    const unannounced = settings.importedCompanies.filter((company) => !company.announcementDate);
+    const unannounced = settings.importedCompanies.filter((company) => !company.announcementDate && !company.completionDate);
     return {
       general: unannounced.filter(isGeneralIndustry).length,
       nonGeneral: unannounced.filter((company) => !isGeneralIndustry(company)).length,
     };
   }, [settings.expectedRemaining, settings.importedCompanies]);
+  const unannouncedCompleted = useMemo(
+    () => settings.importedCompanies.filter((company) => !company.announcementDate && Boolean(company.completionDate)),
+    [settings.importedCompanies],
+  );
   const tableRows = useMemo(() => {
     const calculated = rows.slice().sort((a, b) => a.date.localeCompare(b.date)).reduce<{ backlog: number; rows: Array<LiveRow & { incoming: number; available: number; difference: number; endingBacklog: number }> }>((accumulator, row) => {
       const incoming = settings.importedCompanies.length ? availableReportsForDate(row.date, settings.importedCompanies) : row.received;
@@ -880,19 +897,23 @@ function LiveWorkspace() {
       const newCodes = availableCompanies.map((company) => company.code || company.name);
       const availableCodes = [...newCodes];
       const completedCompanies = scopedCompanies.filter((company) => company.completionDate === row.date);
-      const completedCodes = completedCompanies.map((company) => company.code || company.name);
+      const unannouncedCompletedCompanies = settings.importedCompanies.filter((company) => !company.announcementDate && company.completionDate === row.date);
+      const completedCodes = [...completedCompanies, ...unannouncedCompletedCompanies].map((company) => company.code || company.name);
+      const unannouncedCompletedCodes = unannouncedCompletedCompanies.map((company) => company.code || company.name);
       const availableKeys = new Set(availableCompanies.map((company) => companyIdentity(company.code, company.name)));
       const matchedCodes = completedCompanies.filter((company) => availableKeys.has(companyIdentity(company.code, company.name))).map((company) => company.code || company.name);
       const completedOnlyCodes = completedCompanies.filter((company) => !availableKeys.has(companyIdentity(company.code, company.name))).map((company) => company.code || company.name);
       const endingBacklogCodes = scopedCompanies.filter((company) => !company.completionDate || company.completionDate > row.date).map((company) => company.code || company.name);
-      result.set(row.date, { date: row.date, newCodes, availableCodes, completedCodes, matchedCodes, completedOnlyCodes, endingBacklogCodes });
+      result.set(row.date, { date: row.date, newCodes, availableCodes, completedCodes, unannouncedCompletedCodes, matchedCodes, completedOnlyCodes, endingBacklogCodes });
     });
     return result;
   }, [settings.importedCompanies, settings.seasonStartDate, tableRows]);
   const memberDailyStats = useMemo<MemberDailyCount[]>(() => {
     if (!settings.importedCompanies.length) return [];
     const today = localTodayISO();
-    const scopedCompanies = issuedCompaniesForPeriod(settings.importedCompanies, settings.seasonStartDate, today);
+    const issuedCompanies = issuedCompaniesForPeriod(settings.importedCompanies, settings.seasonStartDate, today);
+    const scopedCompanies = [...issuedCompanies, ...settings.importedCompanies.filter((company) => !company.announcementDate && company.completionDate)]
+      .filter((company, index, list) => list.findIndex((item) => companyIdentity(item.code, item.name) === companyIdentity(company.code, company.name)) === index);
     const memberNames = settings.members.map((member) => member.name.trim()).filter(Boolean);
     const normalizeMember = (value: string | null) => String(value ?? '').trim().toLocaleLowerCase();
     return tableRows.flatMap((row) => memberNames.map((member) => {
@@ -907,12 +928,15 @@ function LiveWorkspace() {
     const today = localTodayISO();
     const issuedCompanies = issuedCompaniesForPeriod(settings.importedCompanies, settings.seasonStartDate, today);
     const importedMode = settings.importedCompanies.length > 0;
+    const completedUnannounced = unannouncedCompleted.filter((company) => Boolean(company.completionDate && company.completionDate >= settings.seasonStartDate && company.completionDate <= today));
+    const completedCompanies = [...issuedCompanies, ...completedUnannounced]
+      .filter((company, index, list) => list.findIndex((item) => companyIdentity(item.code, item.name) === companyIdentity(company.code, company.name)) === index);
     const received = importedMode ? issuedCompanies.length : validRows.reduce((sum, row) => sum + row.received, 0);
-    const completed = importedMode ? issuedCompanies.filter((company) => Boolean(company.completionDate && company.completionDate <= today)).length : validRows.reduce((sum, row) => sum + row.completed, 0);
+    const completed = importedMode ? completedCompanies.filter((company) => Boolean(company.completionDate && company.completionDate <= today)).length : validRows.reduce((sum, row) => sum + row.completed, 0);
     const generalReceived = importedMode ? issuedCompanies.filter(isGeneralIndustry).length : received;
     const nonGeneralReceived = importedMode ? issuedCompanies.filter((company) => !isGeneralIndustry(company)).length : 0;
-    const generalCompleted = importedMode ? issuedCompanies.filter((company) => isGeneralIndustry(company) && Boolean(company.completionDate && company.completionDate <= today)).length : completed;
-    const nonGeneralCompleted = importedMode ? issuedCompanies.filter((company) => !isGeneralIndustry(company) && Boolean(company.completionDate && company.completionDate <= today)).length : 0;
+    const generalCompleted = importedMode ? completedCompanies.filter((company) => isGeneralIndustry(company) && Boolean(company.completionDate && company.completionDate <= today)).length : completed;
+    const nonGeneralCompleted = importedMode ? completedCompanies.filter((company) => !isGeneralIndustry(company) && Boolean(company.completionDate && company.completionDate <= today)).length : 0;
     const expectedRemaining = Math.max(0, settings.expectedRemaining);
     const generalBacklog = Math.max(0, generalReceived - generalCompleted) + unannouncedCounts.general;
     const nonGeneralBacklog = Math.max(0, nonGeneralReceived - nonGeneralCompleted) + unannouncedCounts.nonGeneral;
@@ -943,7 +967,7 @@ function LiveWorkspace() {
       return { ...row, backlog: Math.max(0, cumulativeReceived - cumulativeCompleted) };
     });
     return { received, completed, backlog, outstanding, daysLeft, dailyCapacity, teamCount: team.teamCount, remainingCapacity, feasible, neededDaily, requiredPeople, observedPerPerson, finishDate, points, generalReceived, nonGeneralReceived, generalCompleted, nonGeneralCompleted, generalBacklog, nonGeneralBacklog, generalRequiredPeople, nonGeneralRequiredPeople, generalCapacity: team.generalCapacity, nonGeneralCapacity: team.nonGeneralCapacity, generalCount: team.generalCount, nonGeneralCount: team.nonGeneralCount };
-  }, [settings, validRows, unannouncedCounts]);
+  }, [settings, validRows, unannouncedCompleted, unannouncedCounts]);
 
   function updateRow(id: string, patch: Partial<LiveRow>) {
     setRows((current) => current.map((row) => (row.id === id ? { ...row, ...patch } : row)));
@@ -1014,7 +1038,7 @@ function LiveWorkspace() {
     const today = localTodayISO();
     const start = settings.seasonStartDate;
     const counts = summarizeCompanies(companies, start, today);
-    setSettings((current) => ({ ...current, expectedRemaining: 0, importedCompanies: companies }));
+    setSettings((current) => ({ ...current, expectedRemaining: 0, importedCompanies: companies, unlistedCompletions: [] }));
     setImportSummary({ total: companies.length, ...counts, duplicates: Math.max(0, rawCount - companies.length) });
     setImportError('');
   }
@@ -1039,13 +1063,20 @@ function LiveWorkspace() {
     }
     const fallbackYear = parseYear(importAnnyymm);
     const completionByCompany = new Map<string, { date: string; memberName: string }>();
+    const importedCompanyKeys = new Set(settings.importedCompanies.map((company) => companyIdentity(company.code, company.name)));
+    const unlistedByCompany = new Map<string, UnlistedCompletion>();
     selectedSheets.forEach(({ sheet, memberName }) => sheet.rows.forEach((row) => {
       if (String(row[sheet.periodIndex] ?? '').trim() !== importAnnyymm || String(row[sheet.quarterIndex] ?? '').trim() !== importQuarter || sheet.completionIndex < 0) return;
       const code = String(row[sheet.codeIndex] ?? '').trim();
       const name = String(row[sheet.nameIndex] ?? '').trim();
       const key = companyIdentity(code, name);
       const completion = normalizeDateValue(row[sheet.completionIndex], fallbackYear);
-      if (key && completion && !completionByCompany.has(key)) completionByCompany.set(key, { date: completion, memberName });
+      if (!key || !completion) return;
+      if (importedCompanyKeys.has(key)) {
+        if (!completionByCompany.has(key)) completionByCompany.set(key, { date: completion, memberName });
+      } else if (!unlistedByCompany.has(key)) {
+        unlistedByCompany.set(key, { code, name: name || code, completionDate: completion, completionMember: memberName });
+      }
     }));
     const updatedCompanies = settings.importedCompanies.map((company) => {
       const completion = completionByCompany.get(companyIdentity(company.code, company.name));
@@ -1055,7 +1086,7 @@ function LiveWorkspace() {
     const start = settings.seasonStartDate;
     const counts = summarizeCompanies(updatedCompanies, start, today);
     setRows(rowsFromCompanies(updatedCompanies, start, today));
-    setSettings((current) => ({ ...current, openingBacklog: 0, expectedRemaining: 0, importedCompanies: updatedCompanies }));
+    setSettings((current) => ({ ...current, openingBacklog: 0, expectedRemaining: 0, importedCompanies: updatedCompanies, unlistedCompletions: Array.from(unlistedByCompany.values()) }));
     setImportSummary({ total: updatedCompanies.length, ...counts, duplicates: 0 });
     setImportError(`已依 ${selectedSheets.map(({ sheet }) => sheet.name).join('、')} 的完成日更新實績。`);
   }
@@ -1063,6 +1094,7 @@ function LiveWorkspace() {
   const maxTrend = result ? Math.max(1, ...result.points.flatMap((point) => [point.received, point.completed, point.backlog])) : 1;
 
   return (
+    <>
     <div className="workspace-grid">
       <section className="input-column">
         <div className="section-heading"><div><span>STEP 1</span><h2>設定目前人力</h2></div></div>
@@ -1097,7 +1129,7 @@ function LiveWorkspace() {
                 <div className="table-date-cell">
                   <input aria-label="實績日期" type="date" value={row.date} onChange={(event) => updateRow(row.id, { date: event.target.value })} />
                   {row.date && <small className={!isWorkday(parseDate(row.date)) ? 'is-weekend' : ''}>{formatWeekday(row.date)}{!isWorkday(parseDate(row.date)) ? '・非工作日' : ''}</small>}
-                  {dailyComparisonByDate.get(row.date) && <details className="code-detail"><summary>查看公司碼</summary><div><small>當日新增公告：{dailyComparisonByDate.get(row.date)!.newCodes.join('、') || '—'}</small><small>已做：{dailyComparisonByDate.get(row.date)!.completedCodes.join('、') || '—'}</small><small>未配對：{dailyComparisonByDate.get(row.date)!.completedOnlyCodes.join('、') || '—'}</small><small>剩餘：{dailyComparisonByDate.get(row.date)!.endingBacklogCodes.join('、') || '—'}</small></div></details>}
+                  {dailyComparisonByDate.get(row.date) && <details className="code-detail"><summary>查看公司碼</summary><div><small>當日新增公告：{dailyComparisonByDate.get(row.date)!.newCodes.join('、') || '—'}</small><small>已做：{dailyComparisonByDate.get(row.date)!.completedCodes.join('、') || '—'}</small><small>已做（未列公告）：{dailyComparisonByDate.get(row.date)!.unannouncedCompletedCodes.join('、') || '—'}</small><small>未配對：{dailyComparisonByDate.get(row.date)!.completedOnlyCodes.join('、') || '—'}</small><small>剩餘：{dailyComparisonByDate.get(row.date)!.endingBacklogCodes.join('、') || '—'}</small></div></details>}
                 </div>
                 <input aria-label="當日可做本數" type="number" min="0" value={row.incoming || ''} placeholder="0" readOnly={settings.importedCompanies.length > 0} onChange={(event) => updateRow(row.id, { received: Number(event.target.value) })} />
                 <input aria-label="實際完成量" type="number" min="0" value={row.completed || ''} placeholder="0" onChange={(event) => updateRow(row.id, { completed: Number(event.target.value) })} />
@@ -1183,6 +1215,15 @@ function LiveWorkspace() {
         )}
       </aside>
     </div>
+    {settings.unlistedCompletions.length > 0 && <details className="company-list-card unlisted-completions-card" open>
+      <summary>忙季已完成但不在公司清單的 {compactNumber(settings.unlistedCompletions.length)} 家公司</summary>
+      <div className="company-list">
+        {settings.unlistedCompletions.slice().sort((a, b) => a.completionDate.localeCompare(b.completionDate) || a.name.localeCompare(b.name)).map((item) => (
+          <div key={`${item.code || item.name}-${item.completionDate}`}><span>{item.code || '—'}</span><strong>{item.name}</strong><small>完成 {formatDate(item.completionDate)}・人員 {item.completionMember}</small></div>
+        ))}
+      </div>
+    </details>}
+    </>
   );
 }
 
