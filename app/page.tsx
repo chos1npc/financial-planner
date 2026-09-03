@@ -391,8 +391,11 @@ function mergeCompany(existing: ImportedCompany, incoming: ImportedCompany) {
 }
 
 function companyIdentity(code: string, name: string) {
-  const normalizedCode = code.trim();
-  if (normalizedCode) return /^\d+$/.test(normalizedCode) ? normalizedCode.replace(/^0+(?=\d)/, '') : normalizedCode.toLocaleLowerCase();
+  const normalizedCode = code.trim().replace(/\s+/g, '');
+  if (normalizedCode) {
+    const numericCode = normalizedCode.replace(/\.0+$/, '');
+    return /^\d+$/.test(numericCode) ? numericCode.replace(/^0+(?=\d)/, '') : numericCode.toLocaleLowerCase();
+  }
   return name.trim().toLocaleLowerCase();
 }
 
@@ -877,26 +880,31 @@ function LiveWorkspace() {
     () => settings.importedCompanies.filter((company) => !company.announcementDate && Boolean(company.completionDate)),
     [settings.importedCompanies],
   );
+  const companyNameByCode = useMemo(() => new Map(
+    settings.importedCompanies
+      .filter((company) => company.code && company.name && company.name !== company.code)
+      .map((company) => [companyIdentity(company.code, ''), company.name]),
+  ), [settings.importedCompanies]);
   const noAnnouncementCompletions = useMemo<CompletionException[]>(() => {
     const today = localTodayISO();
     return unannouncedCompleted
       .filter((company) => Boolean(company.completionDate && company.completionDate >= settings.seasonStartDate && company.completionDate <= today))
       .map((company) => ({
         code: company.code,
-        name: company.name,
+        name: companyNameByCode.get(companyIdentity(company.code, '')) ?? company.name,
         completionDate: company.completionDate!,
         completionMember: company.completionMember ?? '—',
         reason: '公司清單內但公告日空白',
       }))
       .sort((a, b) => a.completionDate.localeCompare(b.completionDate) || a.name.localeCompare(b.name));
-  }, [settings.seasonStartDate, unannouncedCompleted]);
+  }, [companyNameByCode, settings.seasonStartDate, unannouncedCompleted]);
   const notInCompanyListCompletions = useMemo<CompletionException[]>(() => {
     const today = localTodayISO();
     return settings.unlistedCompletions
       .filter((item) => item.completionDate >= settings.seasonStartDate && item.completionDate <= today)
-      .map((item) => ({ ...item, reason: '不在公司清單' }))
+      .map((item) => ({ ...item, name: (companyNameByCode.get(companyIdentity(item.code, '')) ?? item.name) || item.code, reason: '不在公司清單' }))
       .sort((a, b) => a.completionDate.localeCompare(b.completionDate) || a.name.localeCompare(b.name));
-  }, [settings.seasonStartDate, settings.unlistedCompletions]);
+  }, [companyNameByCode, settings.seasonStartDate, settings.unlistedCompletions]);
   const tableRows = useMemo(() => {
     const calculated = rows.slice().sort((a, b) => a.date.localeCompare(b.date)).reduce<{ backlog: number; rows: Array<LiveRow & { incoming: number; available: number; difference: number; endingBacklog: number }> }>((accumulator, row) => {
       const incoming = settings.importedCompanies.length ? availableReportsForDate(row.date, settings.importedCompanies) : row.received;
@@ -1085,6 +1093,9 @@ function LiveWorkspace() {
     const fallbackYear = parseYear(importAnnyymm);
     const completionByCompany = new Map<string, { date: string; memberName: string }>();
     const importedCompanyKeys = new Set(settings.importedCompanies.map((company) => companyIdentity(company.code, company.name)));
+    const companyNameByCode = new Map(settings.importedCompanies
+      .filter((company) => company.code && company.name && company.name !== company.code)
+      .map((company) => [companyIdentity(company.code, ''), company.name]));
     const unlistedByCompany = new Map<string, UnlistedCompletion>();
     selectedSheets.forEach(({ sheet, memberName }) => sheet.rows.forEach((row) => {
       if (String(row[sheet.periodIndex] ?? '').trim() !== importAnnyymm || String(row[sheet.quarterIndex] ?? '').trim() !== importQuarter || sheet.completionIndex < 0) return;
@@ -1096,7 +1107,7 @@ function LiveWorkspace() {
       if (importedCompanyKeys.has(key)) {
         if (!completionByCompany.has(key)) completionByCompany.set(key, { date: completion, memberName });
       } else if (!unlistedByCompany.has(key)) {
-        unlistedByCompany.set(key, { code, name: name || code, completionDate: completion, completionMember: memberName });
+        unlistedByCompany.set(key, { code, name: (companyNameByCode.get(companyIdentity(code, '')) ?? name) || code, completionDate: completion, completionMember: memberName });
       }
     }));
     const updatedCompanies = settings.importedCompanies.map((company) => {
