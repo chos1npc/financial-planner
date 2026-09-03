@@ -877,26 +877,26 @@ function LiveWorkspace() {
     () => settings.importedCompanies.filter((company) => !company.announcementDate && Boolean(company.completionDate)),
     [settings.importedCompanies],
   );
-  const completionExceptions = useMemo<CompletionException[]>(() => {
+  const noAnnouncementCompletions = useMemo<CompletionException[]>(() => {
     const today = localTodayISO();
-    const byCompany = new Map<string, CompletionException>();
-    unannouncedCompleted.forEach((company) => {
-      if (!company.completionDate || company.completionDate < settings.seasonStartDate || company.completionDate > today) return;
-      byCompany.set(companyIdentity(company.code, company.name), {
+    return unannouncedCompleted
+      .filter((company) => Boolean(company.completionDate && company.completionDate >= settings.seasonStartDate && company.completionDate <= today))
+      .map((company) => ({
         code: company.code,
         name: company.name,
-        completionDate: company.completionDate,
+        completionDate: company.completionDate!,
         completionMember: company.completionMember ?? '—',
         reason: '公司清單內但公告日空白',
-      });
-    });
-    settings.unlistedCompletions.forEach((item) => {
-      if (item.completionDate < settings.seasonStartDate || item.completionDate > today) return;
-      const key = companyIdentity(item.code, item.name);
-      if (!byCompany.has(key)) byCompany.set(key, { ...item, reason: '不在公司清單' });
-    });
-    return Array.from(byCompany.values()).sort((a, b) => a.completionDate.localeCompare(b.completionDate) || a.name.localeCompare(b.name));
-  }, [settings.seasonStartDate, settings.unlistedCompletions, unannouncedCompleted]);
+      }))
+      .sort((a, b) => a.completionDate.localeCompare(b.completionDate) || a.name.localeCompare(b.name));
+  }, [settings.seasonStartDate, unannouncedCompleted]);
+  const notInCompanyListCompletions = useMemo<CompletionException[]>(() => {
+    const today = localTodayISO();
+    return settings.unlistedCompletions
+      .filter((item) => item.completionDate >= settings.seasonStartDate && item.completionDate <= today)
+      .map((item) => ({ ...item, reason: '不在公司清單' }))
+      .sort((a, b) => a.completionDate.localeCompare(b.completionDate) || a.name.localeCompare(b.name));
+  }, [settings.seasonStartDate, settings.unlistedCompletions]);
   const tableRows = useMemo(() => {
     const calculated = rows.slice().sort((a, b) => a.date.localeCompare(b.date)).reduce<{ backlog: number; rows: Array<LiveRow & { incoming: number; available: number; difference: number; endingBacklog: number }> }>((accumulator, row) => {
       const incoming = settings.importedCompanies.length ? availableReportsForDate(row.date, settings.importedCompanies) : row.received;
@@ -1236,14 +1236,34 @@ function LiveWorkspace() {
         )}
       </aside>
     </div>
-    {completionExceptions.length > 0 && <details className="company-list-card unlisted-completions-card" open>
-      <summary>忙季已完成但沒有公告資料的 {compactNumber(completionExceptions.length)} 家公司</summary>
-      <div className="company-list">
-        {completionExceptions.map((item) => (
-          <div key={`${item.code || item.name}-${item.completionDate}`}><span>{item.code || '—'}</span><strong>{item.name}</strong><small>完成 {formatDate(item.completionDate)}・人員 {item.completionMember}・{item.reason}</small></div>
-        ))}
+    {(noAnnouncementCompletions.length > 0 || notInCompanyListCompletions.length > 0) && <section className="completion-exception-card">
+      <div className="member-daily-heading">
+        <div><span>完成紀錄例外</span><h3>沒有公告資料但已完成</h3></div>
+        <small>完成紀錄會保留，但不會混入公司清單的公告統計</small>
       </div>
-    </details>}
+      {noAnnouncementCompletions.length > 0 && <div className="completion-exception-section">
+        <h3>公司清單內，但公告日空白（{compactNumber(noAnnouncementCompletions.length)} 家）</h3>
+        <div className="data-table completion-exception-table">
+          <div className="table-row table-header"><span>公司碼</span><span>公司名稱</span><span>原因</span><span>完成日</span><span>人員</span></div>
+          {noAnnouncementCompletions.map((item) => (
+            <div className="table-row" key={`no-announcement-${item.code || item.name}-${item.completionDate}`}>
+              <span>{item.code || '—'}</span><strong>{item.name}</strong><span>{item.reason}</span><span>{formatDate(item.completionDate)}</span><span>{item.completionMember}</span>
+            </div>
+          ))}
+        </div>
+      </div>}
+      {notInCompanyListCompletions.length > 0 && <div className="completion-exception-section">
+        <h3>不在公司清單（{compactNumber(notInCompanyListCompletions.length)} 家）</h3>
+        <div className="data-table completion-exception-table">
+          <div className="table-row table-header"><span>公司碼</span><span>公司名稱</span><span>原因</span><span>完成日</span><span>人員</span></div>
+          {notInCompanyListCompletions.map((item) => (
+            <div className="table-row" key={`not-in-list-${item.code || item.name}-${item.completionDate}`}>
+              <span>{item.code || '—'}</span><strong>{item.name}</strong><span>{item.reason}</span><span>{formatDate(item.completionDate)}</span><span>{item.completionMember}</span>
+            </div>
+          ))}
+        </div>
+      </div>}
+    </section>}
     </>
   );
 }

@@ -381,6 +381,10 @@ button { color: inherit; }
 .company-list > div { display: grid; grid-template-columns: 80px 1fr auto; gap: 10px; align-items: center; padding: 8px 14px; border-bottom: 1px solid #e5e7e1; font-size: 11px; }
 .company-list span, .company-list small { color: var(--muted); }
 .company-list small { font-size: 9px; }
+.completion-exception-card { margin-top: 18px; overflow: hidden; border: 1px solid var(--line); border-radius: 4px 18px 4px 4px; background: rgba(255,253,248,.7); }
+.completion-exception-section + .completion-exception-section { border-top: 1px solid var(--line); }
+.completion-exception-section h3 { margin: 0; padding: 16px; border-bottom: 1px solid var(--line); font-family: Georgia, "Noto Serif TC", serif; font-size: 18px; }
+.completion-exception-table .table-row { min-width: 720px; grid-template-columns: 100px minmax(180px, 1.3fr) minmax(180px, 1.4fr) 120px 110px; }
 .table-date-cell { display: grid; gap: 3px; }
 .table-date-cell small { color: #36784f; font-size: 9px; font-weight: 800; }
 .table-date-cell small.is-weekend { color: var(--coral-dark); }
