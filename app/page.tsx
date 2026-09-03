@@ -10,6 +10,7 @@ type HistoricalRow = { id: string; date: string; quantity: number };
 type LiveRow = { id: string; date: string; received: number; completed: number };
 type ImportedCompany = { id: string; code: string; name: string; finInd: string; announcementDate: string | null; completionDate: string | null; completionMember: string | null };
 type UnlistedCompletion = { code: string; name: string; completionDate: string; completionMember: string };
+type CompletionException = UnlistedCompletion & { reason: string };
 type MemberDailyCount = { date: string; member: string; general: number; nonGeneral: number; total: number };
 type DailyComparison = { date: string; newCodes: string[]; availableCodes: string[]; completedCodes: string[]; unannouncedCompletedCodes: string[]; matchedCodes: string[]; completedOnlyCodes: string[]; endingBacklogCodes: string[] };
 type WorkbookSheet = { name: string; headers: string[]; rows: string[][] };
@@ -876,6 +877,26 @@ function LiveWorkspace() {
     () => settings.importedCompanies.filter((company) => !company.announcementDate && Boolean(company.completionDate)),
     [settings.importedCompanies],
   );
+  const completionExceptions = useMemo<CompletionException[]>(() => {
+    const today = localTodayISO();
+    const byCompany = new Map<string, CompletionException>();
+    unannouncedCompleted.forEach((company) => {
+      if (!company.completionDate || company.completionDate < settings.seasonStartDate || company.completionDate > today) return;
+      byCompany.set(companyIdentity(company.code, company.name), {
+        code: company.code,
+        name: company.name,
+        completionDate: company.completionDate,
+        completionMember: company.completionMember ?? '—',
+        reason: '公司清單內但公告日空白',
+      });
+    });
+    settings.unlistedCompletions.forEach((item) => {
+      if (item.completionDate < settings.seasonStartDate || item.completionDate > today) return;
+      const key = companyIdentity(item.code, item.name);
+      if (!byCompany.has(key)) byCompany.set(key, { ...item, reason: '不在公司清單' });
+    });
+    return Array.from(byCompany.values()).sort((a, b) => a.completionDate.localeCompare(b.completionDate) || a.name.localeCompare(b.name));
+  }, [settings.seasonStartDate, settings.unlistedCompletions, unannouncedCompleted]);
   const tableRows = useMemo(() => {
     const calculated = rows.slice().sort((a, b) => a.date.localeCompare(b.date)).reduce<{ backlog: number; rows: Array<LiveRow & { incoming: number; available: number; difference: number; endingBacklog: number }> }>((accumulator, row) => {
       const incoming = settings.importedCompanies.length ? availableReportsForDate(row.date, settings.importedCompanies) : row.received;
@@ -1215,11 +1236,11 @@ function LiveWorkspace() {
         )}
       </aside>
     </div>
-    {settings.unlistedCompletions.length > 0 && <details className="company-list-card unlisted-completions-card" open>
-      <summary>忙季已完成但不在公司清單的 {compactNumber(settings.unlistedCompletions.length)} 家公司</summary>
+    {completionExceptions.length > 0 && <details className="company-list-card unlisted-completions-card" open>
+      <summary>忙季已完成但沒有公告資料的 {compactNumber(completionExceptions.length)} 家公司</summary>
       <div className="company-list">
-        {settings.unlistedCompletions.slice().sort((a, b) => a.completionDate.localeCompare(b.completionDate) || a.name.localeCompare(b.name)).map((item) => (
-          <div key={`${item.code || item.name}-${item.completionDate}`}><span>{item.code || '—'}</span><strong>{item.name}</strong><small>完成 {formatDate(item.completionDate)}・人員 {item.completionMember}</small></div>
+        {completionExceptions.map((item) => (
+          <div key={`${item.code || item.name}-${item.completionDate}`}><span>{item.code || '—'}</span><strong>{item.name}</strong><small>完成 {formatDate(item.completionDate)}・人員 {item.completionMember}・{item.reason}</small></div>
         ))}
       </div>
     </details>}
