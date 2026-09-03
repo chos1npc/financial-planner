@@ -958,19 +958,24 @@ function LiveWorkspace() {
     const issuedCompanies = issuedCompaniesForPeriod(settings.importedCompanies, settings.seasonStartDate, today);
     const importedMode = settings.importedCompanies.length > 0;
     const completedUnannounced = unannouncedCompleted.filter((company) => Boolean(company.completionDate && company.completionDate >= settings.seasonStartDate && company.completionDate <= today));
-    const completedCompanies = [...issuedCompanies, ...completedUnannounced]
+    const completedIssuedCompanies = issuedCompanies.filter((company) => Boolean(company.completionDate && company.completionDate <= today));
+    const completedCompanies = [...completedIssuedCompanies, ...completedUnannounced]
       .filter((company, index, list) => list.findIndex((item) => companyIdentity(item.code, item.name) === companyIdentity(company.code, company.name)) === index);
     const received = importedMode ? issuedCompanies.length : validRows.reduce((sum, row) => sum + row.received, 0);
     const completed = importedMode ? completedCompanies.filter((company) => Boolean(company.completionDate && company.completionDate <= today)).length : validRows.reduce((sum, row) => sum + row.completed, 0);
     const generalReceived = importedMode ? issuedCompanies.filter(isGeneralIndustry).length : received;
     const nonGeneralReceived = importedMode ? issuedCompanies.filter((company) => !isGeneralIndustry(company)).length : 0;
-    const generalCompleted = importedMode ? completedCompanies.filter((company) => isGeneralIndustry(company) && Boolean(company.completionDate && company.completionDate <= today)).length : completed;
-    const nonGeneralCompleted = importedMode ? completedCompanies.filter((company) => !isGeneralIndustry(company) && Boolean(company.completionDate && company.completionDate <= today)).length : 0;
-    const expectedRemaining = Math.max(0, settings.expectedRemaining);
-    const generalBacklog = Math.max(0, generalReceived - generalCompleted) + unannouncedCounts.general;
-    const nonGeneralBacklog = Math.max(0, nonGeneralReceived - nonGeneralCompleted) + unannouncedCounts.nonGeneral;
-    const backlog = Math.max(0, received - completed);
-    const outstanding = importedMode ? generalBacklog + nonGeneralBacklog : backlog + expectedRemaining;
+    const completedIssued = importedMode ? completedIssuedCompanies.length : completed;
+    const generalCompleted = importedMode ? completedIssuedCompanies.filter(isGeneralIndustry).length : completed;
+    const nonGeneralCompleted = importedMode ? completedIssuedCompanies.filter((company) => !isGeneralIndustry(company)).length : 0;
+    const issuedBacklog = Math.max(0, received - completedIssued);
+    const unannouncedRemaining = importedMode ? unannouncedCounts.general + unannouncedCounts.nonGeneral : Math.max(0, settings.expectedRemaining);
+    const generalIssuedBacklog = Math.max(0, generalReceived - generalCompleted);
+    const nonGeneralIssuedBacklog = Math.max(0, nonGeneralReceived - nonGeneralCompleted);
+    const generalBacklog = generalIssuedBacklog + (importedMode ? unannouncedCounts.general : 0);
+    const nonGeneralBacklog = nonGeneralIssuedBacklog + (importedMode ? unannouncedCounts.nonGeneral : 0);
+    const backlog = issuedBacklog;
+    const outstanding = issuedBacklog + unannouncedRemaining;
     const latestDate = parseDate(validRows[validRows.length - 1].date);
     const nextDate = addDays(latestDate, 1);
     const deadline = parseDate(settings.completionDate);
@@ -980,6 +985,8 @@ function LiveWorkspace() {
     const remainingCapacity = daysLeft * dailyCapacity;
     const deadlineSimulation = simulateCategoryWork(generalBacklog, nonGeneralBacklog, nextDate, deadline, team);
     const feasible = deadlineSimulation.generalRemaining + deadlineSimulation.nonGeneralRemaining <= 0;
+    const pendingDeadlineSimulation = simulateCategoryWork(generalIssuedBacklog, nonGeneralIssuedBacklog, nextDate, deadline, team);
+    const pendingFeasible = pendingDeadlineSimulation.generalRemaining + pendingDeadlineSimulation.nonGeneralRemaining <= 0;
     const neededDaily = daysLeft > 0 ? outstanding / daysLeft : Infinity;
     const requiredPeople = daysLeft > 0 && team.perPersonCapacity > 0 ? Math.ceil(outstanding / (daysLeft * team.perPersonCapacity)) : null;
     const generalRequiredPeople = daysLeft > 0 && team.generalPerPersonCapacity > 0 ? Math.ceil(generalBacklog / (daysLeft * team.generalPerPersonCapacity)) : (generalBacklog > 0 ? null : 0);
@@ -988,6 +995,8 @@ function LiveWorkspace() {
     const observedPerPerson = actualDays > 0 && team.teamCount > 0 ? completed / actualDays / team.teamCount : 0;
     const finishSimulation = feasible ? deadlineSimulation : simulateCategoryWork(generalBacklog, nonGeneralBacklog, nextDate, addDays(nextDate, 365), team);
     const finishDate: Date | null = generalBacklog + nonGeneralBacklog <= 0 ? latestDate : finishSimulation.finishDate;
+    const pendingFinishSimulation = pendingFeasible ? pendingDeadlineSimulation : simulateCategoryWork(generalIssuedBacklog, nonGeneralIssuedBacklog, nextDate, addDays(nextDate, 365), team);
+    const pendingFinishDate: Date | null = issuedBacklog <= 0 ? latestDate : pendingFinishSimulation.finishDate;
     let cumulativeReceived = settings.openingBacklog;
     let cumulativeCompleted = 0;
     const points = validRows.map((row) => {
@@ -995,7 +1004,7 @@ function LiveWorkspace() {
       cumulativeCompleted += row.completed;
       return { ...row, backlog: Math.max(0, cumulativeReceived - cumulativeCompleted) };
     });
-    return { received, completed, backlog, outstanding, daysLeft, dailyCapacity, teamCount: team.teamCount, remainingCapacity, feasible, neededDaily, requiredPeople, observedPerPerson, finishDate, points, generalReceived, nonGeneralReceived, generalCompleted, nonGeneralCompleted, generalBacklog, nonGeneralBacklog, generalRequiredPeople, nonGeneralRequiredPeople, generalCapacity: team.generalCapacity, nonGeneralCapacity: team.nonGeneralCapacity, generalCount: team.generalCount, nonGeneralCount: team.nonGeneralCount };
+    return { received, completed, completedIssued, backlog, issuedBacklog, unannouncedRemaining, outstanding, daysLeft, dailyCapacity, teamCount: team.teamCount, remainingCapacity, feasible, neededDaily, requiredPeople, observedPerPerson, finishDate, pendingFinishDate, points, generalReceived, nonGeneralReceived, generalCompleted, nonGeneralCompleted, generalBacklog, nonGeneralBacklog, generalRequiredPeople, nonGeneralRequiredPeople, generalCapacity: team.generalCapacity, nonGeneralCapacity: team.nonGeneralCapacity, generalCount: team.generalCount, nonGeneralCount: team.nonGeneralCount };
   }, [settings, validRows, unannouncedCompleted, unannouncedCounts]);
 
   function updateRow(id: string, patch: Partial<LiveRow>) {
@@ -1203,7 +1212,7 @@ function LiveWorkspace() {
               <div className="verdict-icon" aria-hidden="true">{result.feasible ? '✓' : '!'}</div>
               <h2>{result.feasible ? '照目前速度做得完' : '照目前速度會逾期'}</h2>
               <p>{result.feasible ? `估計 ${result.finishDate ? formatDate(result.finishDate) : '期限前'} 清完，仍有緩衝。` : `目前推估要到 ${result.finishDate ? formatDate(result.finishDate) : '一年後'} 才能清完。`}</p>
-              <div className="capacity-line"><span>待處理總量</span><strong>{compactNumber(result.outstanding)} 件</strong></div>
+              <div className="capacity-line"><span>目前已發／待處理／尚未發</span><strong>{compactNumber(result.received)}／{compactNumber(result.issuedBacklog)}／{compactNumber(result.unannouncedRemaining)} 件</strong></div>
             </>
           )}
         </div>
@@ -1211,7 +1220,11 @@ function LiveWorkspace() {
         {result && (
           <>
             <div className="metrics-grid">
-              <Metric label="目前待辦" value={`${compactNumber(result.backlog)} 件`} note={`累計收到 ${compactNumber(result.received)} 件`} />
+              <Metric label="目前已發" value={`${compactNumber(result.received)} 件`} note={`已完成 ${compactNumber(result.completedIssued)} 件`} />
+              <Metric label="已發待處理" value={`${compactNumber(result.issuedBacklog)} 件`} note={result.issuedBacklog > 0 ? `預計 ${result.pendingFinishDate ? formatDate(result.pendingFinishDate) : '超過一年'} 完成` : '目前已完成'} />
+              <Metric label="尚未發出" value={`${compactNumber(result.unannouncedRemaining)} 件`} note="公司清單內尚未公告" />
+              <Metric label="待處理預計完成" value={result.issuedBacklog > 0 ? (result.pendingFinishDate ? formatDate(result.pendingFinishDate) : '超過一年') : '已完成'} note="只計目前已公告但未完成" />
+              <Metric label="全部預計完成" value={result.outstanding > 0 ? (result.finishDate ? formatDate(result.finishDate) : '超過一年') : '已完成'} note={`待處理＋尚未發 ${compactNumber(result.outstanding)} 件`} />
               <Metric label="剩餘工作天" value={`${result.daysLeft} 天`} note={`可產出 ${compactNumber(result.remainingCapacity)} 件`} />
               <Metric label="每日需完成" value={Number.isFinite(result.neededDaily) ? `${compactNumber(result.neededDaily, 1)} 件` : '已無時間'} note={`目前產能 ${compactNumber(result.dailyCapacity, 1)} 件`} />
               <Metric label="最少人力" value={result.requiredPeople ? `${result.requiredPeople} 人` : '無法估算'} note={`目前 ${result.teamCount} 人`} />
